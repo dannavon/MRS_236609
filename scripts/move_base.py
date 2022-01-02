@@ -21,9 +21,9 @@ def movebase_client():
     goal.target_pose.header.frame_id = "map"
     goal.target_pose.header.stamp = rospy.Time.now()
    # Move to position 0.5 on the x axis of the "map" coordinate frame 
-    goal.target_pose.pose.position.x = 0.5
+    goal.target_pose.pose.position.x = 1
     # Move to position 0.5 on the y axis of the "map" coordinate frame 
-    goal.target_pose.pose.position.y = 0.5
+    goal.target_pose.pose.position.y = -3.5
    # No rotation of the mobile base frame w.r.t. map frame
     goal.target_pose.pose.orientation.w = 1.0
 
