@@ -33,74 +33,111 @@ def draw_point(img, p, color):
     cv.circle(img, tuple(p[0]), 2, color, cv.FILLED, cv.LINE_AA)
 
 
-def line_in_room(map, mid_p_i):
-    if map[mid_p_i] != -1:  # mid pixel
-        return True
+class CleaningBlocks:
 
-    size = map.shape
+    def __init__(self, occ_map):
+        self.triangles = None
+        self.occ_map = occ_map
+        self.map_size = occ_map.shape
+        self.rect = (0, 0, self.map_size[1], self.map_size[0])
 
-    if mid_p_i[0] > 0:
-        if map[(mid_p_i[0] - 1, mid_p_i[1])] != -1:  # left pixel
-            return True
-        if mid_p_i[1] > 0:  # left up pixel
-            if map[(mid_p_i[0] - 1, mid_p_i[1] - 1)] != -1:
-                return True
-        if mid_p_i[1] < size[0] - 1:  # left down pixel
-            if map[(mid_p_i[0] - 1, mid_p_i[1] + 1)] != -1:
-                return True
+        ret, thresh = cv.threshold(occ_map, 90, 255, 0)
+        thresh = np.uint8(thresh)
+        self.map_rgb = cv.cvtColor(thresh, cv.COLOR_GRAY2BGR)
+        # map_img_th = thresh.copy()
+        # im2, contours, hierarchy = cv.findContours(map_img_th, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+        # cv.drawContours(map_img_th, contours, -1, (255, 255, 255), 3)
+        corners = cv.goodFeaturesToTrack(thresh, 25, 0.01, 10)
+        self.corners = np.int0(corners)
 
-    if mid_p_i[0] < size[1] - 1:
-        if map[(mid_p_i[0] + 1, mid_p_i[1])] != -1:  # right pixel
-            return True
-        if mid_p_i[1] > 0:  # left up pixel
-            if map[(mid_p_i[0] + 1, mid_p_i[1] - 1)] != -1:
-                return True
-        if mid_p_i[1] < size[0] - 1:  # left down pixel
-            if map[(mid_p_i[0] + 1, mid_p_i[1] + 1)] != -1:
-                return True
+        # Create an instance of Subdiv2D
+        self.sub_div = cv.Subdiv2D(self.rect)
+        # Insert points into sub_div
+        self.sub_div.insert(corners)
 
-    if mid_p_i[1] > 0 and \
-            map[(mid_p_i[0], mid_p_i[1] - 1)] != -1:  # up pixel
-        return True
+        self.extract_triangles()
 
-    if mid_p_i[1] < size[0] - 1 and \
-            map[(mid_p_i[0], mid_p_i[1] + 1)] != -1:  # down pixel
-        return True
+    def extract_triangles(self):
+        initial_triangles = self.sub_div.getTriangleList()
 
-    return False
+        r = self.rect
+        filtered_triangles = []
+        for t in initial_triangles:
 
+            pt1 = (t[0], t[1])
+            pt2 = (t[2], t[3])
+            pt3 = (t[4], t[5])
+            mid1 = (np.uint32((t[1] + t[3]) / 2), np.uint32((t[0] + t[2]) / 2))
+            mid2 = (np.uint32((t[3] + t[5]) / 2), np.uint32((t[2] + t[4]) / 2))
+            mid3 = (np.uint32((t[1] + t[5]) / 2), np.uint32((t[0] + t[4]) / 2))
+            if rect_contains(r, pt1) and rect_contains(r, pt2) and rect_contains(r, pt3):
+                if self.line_in_room(mid1) and self.line_in_room(mid2) and self.line_in_room(mid3):
+                    filtered_triangles.append(t)
 
-# Draw delaunay triangles
-def draw_triangles(img, triangles, delaunay_color):
-    for t in triangles:
-        pt1 = (t[0], t[1])
-        pt2 = (t[2], t[3])
-        pt3 = (t[4], t[5])
-        cv.line(img, pt2, pt3, delaunay_color, 1, cv.LINE_AA, 0)
-        cv.line(img, pt3, pt1, delaunay_color, 1, cv.LINE_AA, 0)
-        cv.line(img, pt1, pt2, delaunay_color, 1, cv.LINE_AA, 0)
-        cv.imshow('delaunay', map_rgb)
+        self.triangles = filtered_triangles
+
+    def get_triangles(self):
+        return self.triangles
+
+    # Draw delaunay triangles
+    def draw_triangles(self, delaunay_color):
+        img = self.map_rgb
+        # Draw points
+        for p in self.corners:
+            draw_point(img, p, (0, 0, 255))
+
+        for t in self.triangles:
+            pt1 = (t[0], t[1])
+            pt2 = (t[2], t[3])
+            pt3 = (t[4], t[5])
+            cv.line(img, pt2, pt3, delaunay_color, 1, cv.LINE_AA, 0)
+            cv.line(img, pt3, pt1, delaunay_color, 1, cv.LINE_AA, 0)
+            cv.line(img, pt1, pt2, delaunay_color, 1, cv.LINE_AA, 0)
+            # cv.imshow('delaunay', img)
+            # cv.waitKey(0)
+
+        # Show results
+        cv.imshow('delaunay', img)
         cv.waitKey(0)
+        # cv.imwrite('delaunay.jpg', img)
 
-def extract_triangles(img_th, map, subdiv):
-    triangles = subdiv.getTriangleList()
+    def line_in_room(self, mid_p_i):
 
-    size = img_th.shape
-    r = (0, 0, size[1], size[0])
-    filtered_triangles = []
-    for t in triangles:
+        map = self.occ_map
 
-        pt1 = (t[0], t[1])
-        pt2 = (t[2], t[3])
-        pt3 = (t[4], t[5])
-        mid1 = (np.uint32((t[1] + t[3]) / 2), np.uint32((t[0] + t[2]) / 2))
-        mid2 = (np.uint32((t[3] + t[5]) / 2), np.uint32((t[2] + t[4]) / 2))
-        mid3 = (np.uint32((t[1] + t[5]) / 2), np.uint32((t[0] + t[4]) / 2))
-        if rect_contains(r, pt1) and rect_contains(r, pt2) and rect_contains(r, pt3):
-            if line_in_room(map, mid1) and line_in_room(map, mid2) and line_in_room(map, mid3):
-                filtered_triangles.append(t)
+        if map[mid_p_i] != -1:  # mid pixel
+            return True
 
-    return filtered_triangles
+        size = map.shape
+        if mid_p_i[0] > 0:
+            if map[(mid_p_i[0] - 1, mid_p_i[1])] != -1:  # left pixel
+                return True
+            if mid_p_i[1] > 0:  # left up pixel
+                if map[(mid_p_i[0] - 1, mid_p_i[1] - 1)] != -1:
+                    return True
+            if mid_p_i[1] < size[0] - 1:  # left down pixel
+                if map[(mid_p_i[0] - 1, mid_p_i[1] + 1)] != -1:
+                    return True
+
+        if mid_p_i[0] < size[1] - 1:
+            if map[(mid_p_i[0] + 1, mid_p_i[1])] != -1:  # right pixel
+                return True
+            if mid_p_i[1] > 0:  # left up pixel
+                if map[(mid_p_i[0] + 1, mid_p_i[1] - 1)] != -1:
+                    return True
+            if mid_p_i[1] < size[0] - 1:  # left down pixel
+                if map[(mid_p_i[0] + 1, mid_p_i[1] + 1)] != -1:
+                    return True
+
+        if mid_p_i[1] > 0 and \
+                map[(mid_p_i[0], mid_p_i[1] - 1)] != -1:  # up pixel
+            return True
+
+        if mid_p_i[1] < size[0] - 1 and \
+                map[(mid_p_i[0], mid_p_i[1] + 1)] != -1:  # down pixel
+            return True
+
+        return False
 
 
 class CostMapUpdater:
@@ -135,8 +172,11 @@ class MapService(object):
         """
         Class constructor
         """
+        self.initial_pose = None
         rospy.wait_for_service('static_map')
         static_map = rospy.ServiceProxy('static_map', GetMap)
+        rospy.Subscriber('/initialpose', PoseWithCovarianceStamped, self.init_pose)
+
         self.map_data = static_map().map
         self.map_org = np.array([self.map_data.info.origin.position.x, self.map_data.info.origin.position.y])
         shape = self.map_data.info.height, self.map_data.info.width
@@ -155,17 +195,16 @@ class MapService(object):
     def map_to_position(self, indices):
         return indices * self.resolution + self.map_org
 
+    def init_pose(self, msg):
+        self.initial_pose = msg.pose.pose
+        print("initial pose is")
+        print("X=" + str(self.initial_pose.position.x))
+        print("y=" + str(self.initial_pose.position.y))
+
 
 # For anyone who wants to change parameters of move_base in python, here is an example:
 # rc_DWA_client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS/")
 # rc_DWA_client.update_configuration({"max_vel_x": "np.inf"})
-
-
-def initial_pose( msg):
-    initialpose = msg.pose.pose
-    print("initial pose is")
-    print("X=" + str(initialpose.position.x))
-    print("y=" + str(initialpose.position.y))
 
 
 def vacuum_cleaning():
@@ -182,47 +221,16 @@ def inspection():
 if __name__ == '__main__':
     rospy.init_node('get_map_example')
     ms = MapService()
-    rospy.Subscriber('/initialpose', PoseWithCovarianceStamped, initial_pose)
+    occ_map = ms.map_arr
 
-    mapImg = ms.map_arr
-
-    ret, thresh = cv.threshold(mapImg, 90, 255, 0)
-    thresh = np.uint8(thresh)
-    map_img_th = thresh.copy()
-    map_rgb = cv.cvtColor(thresh, cv.COLOR_GRAY2BGR)
-
-    im2, contours, hierarchy = cv.findContours(map_img_th, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
-    cv.drawContours(map_img_th, contours, -1, (255, 255, 255), 3)
-
-    corners = cv.goodFeaturesToTrack(mapImg, 25, 0.01, 10)
-    corners = np.int0(corners)
-
-    # Rectangle to be used with Subdiv2D
-    size = mapImg.shape
-    rect = (0, 0, size[1], size[0])
-    # Create an instance of Subdiv2D
-    subdiv = cv.Subdiv2D(rect)
-
-    # Insert points into subdiv
-    subdiv.insert(corners)
-
-    # Draw points
-    for p in corners:
-        draw_point(map_rgb, p, (0, 0, 255))
-
-    triangle_list = extract_triangles(map_rgb, mapImg, subdiv);
+    cb = CleaningBlocks(occ_map)
+    triangle_list = cb.get_triangles()
     # Draw delaunay triangles
-    draw_triangles(map_rgb, triangle_list, (0, 255, 0))
+    cb.draw_triangles((0, 255, 0))
 
     triangles = []
     for t in triangle_list:
-        triangles.append((np.array((t[0], t[1], 0)), np.array((t[2], t[3], 0)),np.array((t[4], t[5], 0))))
-
-
-    # Show results
-    cv.imshow('delaunay', map_rgb)
-    # cv.imwrite('delaunay.jpg', map_rgb)
-    cv.waitKey(0)
+        triangles.append((np.array((t[0], t[1], 0)), np.array((t[2], t[3], 0)), np.array((t[4], t[5], 0))))
 
     exec_mode = sys.argv[1]
     print('exec_mode:' + exec_mode)
