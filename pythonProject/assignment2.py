@@ -1,4 +1,8 @@
 #!/usr/bin/env python
+import time
+from collections import namedtuple
+
+# from typing import List, Set, Any
 
 import rospy
 import sys
@@ -30,7 +34,7 @@ def rect_contains(rect, point):
 
 # Draw a point
 def draw_point(img, p, color):
-    cv.circle(img, tuple(p[0]), 2, color, cv.FILLED, cv.LINE_AA)
+    cv.circle(img, tuple(p), 2, color, cv.FILLED, cv.LINE_AA)
 
 
 class CleaningBlocks:
@@ -54,7 +58,7 @@ class CleaningBlocks:
         self.sub_div = cv.Subdiv2D(self.rect)
         # Insert points into sub_div
         self.sub_div.insert(corners)
-
+        # Filter triangles outside the polygon
         self.extract_triangles()
 
     def extract_triangles(self):
@@ -72,9 +76,13 @@ class CleaningBlocks:
             mid3 = (np.uint32((t[1] + t[5]) / 2), np.uint32((t[0] + t[4]) / 2))
             if rect_contains(r, pt1) and rect_contains(r, pt2) and rect_contains(r, pt3):
                 if self.line_in_room(mid1) and self.line_in_room(mid2) and self.line_in_room(mid3):
-                    filtered_triangles.append(t)
+                    center = (np.round((t[0] + t[2] + t[4]) / 3), np.round((t[1] + t[3] + t[5]) / 3))
+                    mat = np.array([[t[0], t[1], 1], [t[2], t[3], 1], [t[4], t[5], 1]])
+                    area = np.linalg.det(mat) / 2
+                    filtered_triangles.append(Triangle(t, center, area))
 
         self.triangles = filtered_triangles
+
 
     def get_triangles(self):
         return self.triangles
@@ -84,15 +92,17 @@ class CleaningBlocks:
         img = self.map_rgb
         # Draw points
         for p in self.corners:
-            draw_point(img, p, (0, 0, 255))
+            draw_point(img, p[0], (0, 0, 255))
 
-        for t in self.triangles:
+        for triangle in self.triangles:
+            t = triangle.coordinates
             pt1 = (t[0], t[1])
             pt2 = (t[2], t[3])
             pt3 = (t[4], t[5])
             cv.line(img, pt2, pt3, delaunay_color, 1, cv.LINE_AA, 0)
             cv.line(img, pt3, pt1, delaunay_color, 1, cv.LINE_AA, 0)
             cv.line(img, pt1, pt2, delaunay_color, 1, cv.LINE_AA, 0)
+            # print(triangle)
             # cv.imshow('delaunay', img)
             # cv.waitKey(0)
 
@@ -138,6 +148,33 @@ class CleaningBlocks:
             return True
 
         return False
+
+    def sort(self, first_pose):
+        min_dist = 1000
+        ind = 0
+        x = first_pose[0]
+        y = first_pose[1]
+        for (i, triangle) in enumerate(self.triangles):
+            c = triangle.center
+            dist = np.sqrt((c[0] - x) ** 2 + (c[1] - y) ** 2)
+            if dist < min_dist:
+                min_dist = dist
+                ind = i
+
+        closest_tri=self.triangles[ind]
+        t = closest_tri.coordinates
+        pt1 = (t[0], t[1])
+        pt2 = (t[2], t[3])
+        pt3 = (t[4], t[5])
+        img = self.map_rgb
+        cv.line(img, pt2, pt3, (255, 0, 0), 1, cv.LINE_AA, 0)
+        cv.line(img, pt3, pt1, (255, 0, 0), 1, cv.LINE_AA, 0)
+        cv.line(img, pt1, pt2, (255, 0, 0), 1, cv.LINE_AA, 0)
+        draw_point(img, np.uint32(closest_tri.center), (255, 255, 0))
+        draw_point(img, np.uint32(first_pose), (0, 255, 255))
+        cv.imshow('delaunay', self.map_rgb)
+        cv.waitKey(0)
+
 
 
 class CostMapUpdater:
@@ -201,10 +238,49 @@ class MapService(object):
         print("X=" + str(self.initial_pose.position.x))
         print("y=" + str(self.initial_pose.position.y))
 
+    def get_first_pose(self):
+        while self.initial_pose is None:
+            time.sleep(1)
 
-# For anyone who wants to change parameters of move_base in python, here is an example:
-# rc_DWA_client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS/")
-# rc_DWA_client.update_configuration({"max_vel_x": "np.inf"})
+        pos = np.array([self.initial_pose.position.x, self.initial_pose.position.y])
+        return self.position_to_map(pos)
+
+
+class Graph:
+    def __init__(self, gdict=None):
+        if gdict is None:
+            gdict = {}
+        self.gdict = gdict
+
+    def edges(self):
+        return self.findedges
+
+    # Add the new edge
+    def add_edge(self, edge):
+        edge = set(edge)
+        (vrtx1, vrtx2) = tuple(edge)
+        if vrtx1 in self.gdict:
+            self.gdict[vrtx1].append(vrtx2)
+        else:
+            self.gdict[vrtx1] = [vrtx2]
+
+    # List the edge names
+    def find_edges(self):
+        edge_name = []  # type: List[Set[Any]]
+        for vrtx in self.gdict:
+            for nxtvrtx in self.gdict[vrtx]:
+                if {nxtvrtx, vrtx} not in edge_name:
+                    edge_name.append({vrtx, nxtvrtx})
+
+        return edge_name
+
+    def get_vertices(self):
+        return list(self.gdict.keys())
+
+    # Add the vertex as a key
+    def add_vertex(self, vrtx):
+        if vrtx not in self.gdict:
+            self.gdict[vrtx] = []
 
 
 def vacuum_cleaning():
@@ -221,19 +297,30 @@ def inspection():
 if __name__ == '__main__':
     rospy.init_node('get_map_example')
     ms = MapService()
-    occ_map = ms.map_arr
+    Triangle = namedtuple('Triangle', ['coordinates', 'center', 'area'])
+    # p = Point(11, y=22)
 
-    cb = CleaningBlocks(occ_map)
+    cb = CleaningBlocks(ms.map_arr)
+
+    first_pose = ms.get_first_pose()
+    cb.sort(first_pose)
+
     triangle_list = cb.get_triangles()
     # Draw delaunay triangles
     cb.draw_triangles((0, 255, 0))
 
-    triangles = []
-    for t in triangle_list:
+    triangles = []  # Tom's format
+    for triangle in triangle_list:
+        t=triangle.coordinates
         triangles.append((np.array((t[0], t[1], 0)), np.array((t[2], t[3], 0)), np.array((t[4], t[5], 0))))
+
 
     exec_mode = sys.argv[1]
     print('exec_mode:' + exec_mode)
+
+    # For anyone who wants to change parameters of move_base in python, here is an example:
+    # rc_DWA_client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS/")
+    # rc_DWA_client.update_configuration({"max_vel_x": "np.inf"})
 
     if exec_mode == 'cleaning':
         vacuum_cleaning()
