@@ -222,18 +222,18 @@ def inspection():
 class Path_finder:
     def __init__(self):
         self.error_gap                                 = 0.1
-        self.line_thickness                            = 3.0#0.105
+        self.robot_width                               = 3.0#0.105
         self.divide_walk_every                         = (10.0 / 3.0)#(1.0 / 3.0)
-        self.line_thickness_with_error_gap             = self.line_thickness * (1.0 + max(0.0, self.error_gap))
-        self.distance_to_stop_before_and_after_corner  = self.line_thickness_with_error_gap
-        self.margin_between_outter_and_inner_triangles = self.line_thickness_with_error_gap
+        self.robot_width_with_error_gap             = self.robot_width * (1.0 + max(0.0, self.error_gap))
+        self.distance_to_stop_before_and_after_corner  = self.robot_width_with_error_gap
+        self.margin_between_outter_and_inner_triangles = self.robot_width_with_error_gap
 
     def find(self, triangles):
         path = []
         for triangle in triangles:
             lines = []
             self.add_collision_points_to_lines(lines, triangle[0], triangle[1], triangle[2])
-            self.margin_between_outter_and_inner_triangles = self.line_thickness_with_error_gap
+            self.margin_between_outter_and_inner_triangles = self.robot_width_with_error_gap
             path.append(lines)
 
         final_borders = []
