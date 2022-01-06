@@ -298,7 +298,6 @@ if __name__ == '__main__':
     rospy.init_node('get_map_example')
     ms = MapService()
     Triangle = namedtuple('Triangle', ['coordinates', 'center', 'area'])
-    # p = Point(11, y=22)
 
     cb = CleaningBlocks(ms.map_arr)
 
