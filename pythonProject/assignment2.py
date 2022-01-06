@@ -223,8 +223,8 @@ class Path_finder:
         self.error_gap                                 = 0.1
         self.robot_width                               = 8.0#3.0#0.105
         self.divide_walk_every                         = (10.0 / 3.0)#(1.0 / 3.0)
-        self.robot_width_with_error_gap             = self.robot_width * (1.0 + max(0.0, self.error_gap))
-        self.distance_to_stop_before_and_after_corner  = self.robot_width_with_error_gap
+        self.robot_width_with_error_gap                = self.robot_width * (1.0 + max(0.0, self.error_gap))
+        self.distance_to_stop_before_next_triangle     = self.robot_width_with_error_gap
         self.margin_between_outter_and_inner_triangles = self.robot_width_with_error_gap
 
     def find(self, triangles):
@@ -243,10 +243,10 @@ class Path_finder:
             for j in range(0, len(current_path), 3):
                 x = []
                 y = []
-                x.append(current_path[j][0][0])
-                y.append(current_path[j][0][1])
-                x.append(current_path[j][1][0])
-                y.append(current_path[j][1][1])
+                x.append(current_path[j    ][0][0])
+                y.append(current_path[j    ][0][1])
+                x.append(current_path[j    ][1][0])
+                y.append(current_path[j    ][1][1])
                 x.append(current_path[j + 1][0][0])
                 y.append(current_path[j + 1][0][1])
                 x.append(current_path[j + 1][1][0])
@@ -264,39 +264,26 @@ class Path_finder:
                 direction_vector         = np.array((current_path_triangle[0][start_index + 1] - current_path_triangle[0][start_index], current_path_triangle[1][start_index + 1] - current_path_triangle[1][start_index], 0))
                 direction_vector_len     = np.linalg.norm(direction_vector)
                 direction_vector_norm    = direction_vector / direction_vector_len
-                direction_vector_new_len = direction_vector_len - (distance_decrease_multiplier * self.distance_to_stop_before_and_after_corner)
-                direction_vector_new_len = max(direction_vector_new_len, self.distance_to_stop_before_and_after_corner)
+                direction_vector_new_len = direction_vector_len - (distance_decrease_multiplier * self.distance_to_stop_before_next_triangle)
+                direction_vector_new_len = direction_vector_new_len
                 number_of_segments       = direction_vector_new_len / self.divide_walk_every
-                new_direction_vector = np.array((current_path_triangle[0][start_index], current_path_triangle[1][start_index], 0)) + direction_vector_norm * self.distance_to_stop_before_and_after_corner#(0 * self.divide_walk_every)
+                new_direction_vector     = np.array((current_path_triangle[0][start_index], current_path_triangle[1][start_index], 0))# + direction_vector_norm * self.distance_to_stop_before_and_after_corner#(0 * self.divide_walk_every)
                 final_path.append({"position": (new_direction_vector[0], new_direction_vector[1]), "angle": yaw_angle})
-                i                        = 1.0
+                i = 1.0
                 while i < number_of_segments:
-                    new_direction_vector = np.array((current_path_triangle[0][start_index], current_path_triangle[1][start_index], 0)) + direction_vector_norm * min((self.distance_to_stop_before_and_after_corner + (i * self.divide_walk_every)), direction_vector_new_len)
+                    new_direction_vector = np.array((current_path_triangle[0][start_index], current_path_triangle[1][start_index], 0)) + direction_vector_norm * min((i * self.divide_walk_every), direction_vector_new_len)
                     final_path.append({"position": (new_direction_vector[0], new_direction_vector[1]), "angle": yaw_angle})
                     i += 1.0
                 new_direction_vector = np.array((current_path_triangle[0][start_index], current_path_triangle[1][start_index], 0)) + direction_vector_norm * direction_vector_new_len
                 final_path.append({"position": (new_direction_vector[0], new_direction_vector[1]), "angle": yaw_angle})
 
-            # def add_corner_turn(final_path, current_path_triangle, start_index):
-            #     yaw_angle                = math.atan2(current_path_triangle[1][start_index + 3] - current_path_triangle[1][start_index + 2], current_path_triangle[0][start_index + 3] - current_path_triangle[0][start_index + 2])
-            #     direction_vector         = np.array((current_path_triangle[0][start_index + 3] - current_path_triangle[0][start_index + 2], current_path_triangle[1][start_index + 3] - current_path_triangle[1][start_index + 2], 0))
-            #     direction_vector_len     = np.linalg.norm(direction_vector)
-            #     direction_vector_norm    = direction_vector / direction_vector_len
-            #     direction_vector_new_len = self.distance_to_stop_before_and_after_corner
-            #     new_direction_vector     = np.array((current_path_triangle[0][start_index + 2], current_path_triangle[1][start_index + 2], 0)) + direction_vector_norm * direction_vector_new_len
-            #     final_path.append({"position": (new_direction_vector[0], new_direction_vector[1]), "angle": yaw_angle})
-
-            def add_straight_walk_and_corner_turn(final_path, current_path_triangle, start_index):
-                add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=start_index, distance_decrease_multiplier=1)
-                # add_corner_turn(final_path=final_path, current_path_triangle=current_path_triangle, start_index=start_index)
-
             for j in range(1, len(current_path_triangles)):
                 current_path_triangle = current_path_triangles[j]
                 yaw_angle             = math.atan2(current_path_triangle[1][1] - current_path_triangle[1][0], current_path_triangle[0][1] - current_path_triangle[0][0])
                 final_path.append({"position": (current_path_triangle[0][0], current_path_triangle[1][0]), "angle": yaw_angle})
-                add_straight_walk_and_corner_turn(final_path=final_path, current_path_triangle=current_path_triangle, start_index=0)
-                add_straight_walk_and_corner_turn(final_path=final_path, current_path_triangle=current_path_triangle, start_index=2)
-                add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=4, distance_decrease_multiplier=2)
+                add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=0, distance_decrease_multiplier=0)
+                add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=2, distance_decrease_multiplier=0)
+                add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=4, distance_decrease_multiplier=1)
 
         return final_borders, final_path
 
