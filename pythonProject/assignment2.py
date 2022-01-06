@@ -3,7 +3,8 @@ import time
 from collections import namedtuple
 
 # from typing import List, Set, Any
-from queue import PriorityQueue
+from Queue import PriorityQueue
+from scipy.spatial.transform import Rotation as R
 
 import rospy
 import tf
@@ -12,7 +13,6 @@ import sys
 import time
 import math
 import numpy as np
-from scipy.spatial.transform import Rotation as R
 import cv2 as cv
 
 from geometry_msgs.msg import PoseWithCovarianceStamped
@@ -46,8 +46,10 @@ def rect_contains(rect, point):
 def draw_point(img, p, color):
     cv.circle(img, tuple(p), 2, color, cv.FILLED, cv.LINE_AA)
 
+
 def distance(a,b):
     return np.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
+
 
 def is_same_edge(e1,e2):
     return (e1.p1 == e2.p1 and e1.p2 == e2.p2) or (e1.p1 == e2.p2 and e1.p2 == e2.p1)
@@ -59,7 +61,7 @@ class CleaningBlocks:
         self.occ_map = occ_map
         self.map_size = occ_map.shape
         self.rect = (0, 0, self.map_size[1], self.map_size[0])
-        # self.graph = Graph()
+        self.graph = Graph()
 
         # find corners
         ret, thresh = cv.threshold(occ_map, 90, 255, 0)
@@ -78,9 +80,6 @@ class CleaningBlocks:
         self.sub_div.insert(corners)
         # Filter triangles outside the polygon
         self.extract_triangles()
-
-        # Build graph
-        # self.graph(len(self.triangles))
 
     def extract_triangles(self):
         initial_triangles = self.sub_div.getTriangleList()
@@ -101,11 +100,12 @@ class CleaningBlocks:
                     mat = np.array([[t[0], t[1], 1], [t[2], t[3], 1], [t[4], t[5], 1]])
                     area = np.linalg.det(mat) / 2
 
-                    tri_edges = [[pt1,pt2,distance(pt1,pt2)], [pt1,pt3,distance(pt1,pt3)], [pt2,pt3,distance(pt2,pt3)]]
-                    center_edges = [[pt1,center,distance(pt1,center)], [pt1,center,distance(pt1,center)], [pt2,center,distance(pt2,center)]]
-                    filtered_triangles.append(Triangle(t, center, area))
-                    self.graph.add_edges(tri_edges)
-                    self.graph.add_edges(center_edges)
+                    tri_edges = [[pt1, pt2, distance(pt1, pt2)], [pt1, pt3, distance(pt1, pt3)],
+                                 [pt2, pt3, distance(pt2, pt3)]]
+                    # center_edges = [[pt1, center, distance(pt1, center)], [pt1, center, distance(pt1, center)],
+                    #                 [pt2, center, distance(pt2, center)]]
+                    filtered_triangles.append(Triangle(t, center, area, tri_edges))
+                    self.add_adjacent_tri_edge(len(filtered_triangles))
 
         self.triangles = filtered_triangles
 
@@ -173,19 +173,12 @@ class CleaningBlocks:
 
         return False
 
-    def locate_initial_pose(self, first_pose):
-        min_dist = 1000
-        ind = 0
-        x = first_pose[0]
-        y = first_pose[1]
-        for (i, triangle) in enumerate(self.triangles):
-            c = triangle.center
-            dist = distance(c ,first_pose)
-            if dist < min_dist:
-                min_dist = dist
-                ind = i
-        # closest_tri = self.triangles[ind]
-        self.graph.add_starting_point(ind)
+    def add_adjacent_tri_edge(self, last_tri_ind):
+        for i in range(last_tri_ind-1):
+            if self.is_neighbor(i, last_tri_ind):
+                a = self.triangles[i].center
+                b = self.triangles[last_tri_ind].center
+                self.graph.add_edges([i, last_tri_ind, distance(a, b)])
 
     def is_neighbor(self, v_i, u_i):
         v_edges = self.triangles[v_i].edges
@@ -196,42 +189,38 @@ class CleaningBlocks:
                     return True
         return False
 
-    def add_vertices(self):
+    def locate_initial_pose(self, first_pose):
         min_dist = 1000
         ind = 0
-
-        num_tri = len(self.triangles)
+        x = first_pose[0]
+        y = first_pose[1]
         for (i, triangle) in enumerate(self.triangles):
-            c1 = triangle.center
-
-            for j in range(i+1, num_tri ):
-                if neighbors_triangles(i, j):
-                    c2 = self.triangles[j].center
-                    dist = distance(c1, c2)
+            c = triangle.center
+            dist = distance(c, first_pose)
             if dist < min_dist:
                 min_dist = dist
                 ind = i
-        # closest_tri = self.triangles[ind]
-        self.graph.add_starting_point(ind)
+        return ind
 
     def sort(self, first_pose):
 
-        self.locate_initial_pose(first_pose)
+        starting_point_ind = self.locate_initial_pose(first_pose)
+        dist_vector = self.graph.dijkstra(starting_point_ind)
+        print(dist_vector)
+        # compute_dist_mat()
 
-        compute_dist_mat()
-
-        t = closest_tri.coordinates
-        pt1 = (t[0], t[1])
-        pt2 = (t[2], t[3])
-        pt3 = (t[4], t[5])
-        img = self.map_rgb
-        cv.line(img, pt2, pt3, (255, 0, 0), 1, cv.LINE_AA, 0)
-        cv.line(img, pt3, pt1, (255, 0, 0), 1, cv.LINE_AA, 0)
-        cv.line(img, pt1, pt2, (255, 0, 0), 1, cv.LINE_AA, 0)
-        draw_point(img, np.uint32(closest_tri.center), (255, 255, 0))
-        draw_point(img, np.uint32(first_pose), (0, 255, 255))
-        cv.imshow('delaunay', self.map_rgb)
-        cv.waitKey(0)
+        # t = closest_tri.coordinates
+        # pt1 = (t[0], t[1])
+        # pt2 = (t[2], t[3])
+        # pt3 = (t[4], t[5])
+        # img = self.map_rgb
+        # cv.line(img, pt2, pt3, (255, 0, 0), 1, cv.LINE_AA, 0)
+        # cv.line(img, pt3, pt1, (255, 0, 0), 1, cv.LINE_AA, 0)
+        # cv.line(img, pt1, pt2, (255, 0, 0), 1, cv.LINE_AA, 0)
+        # draw_point(img, np.uint32(closest_tri.center), (255, 255, 0))
+        # draw_point(img, np.uint32(first_pose), (0, 255, 255))
+        # cv.imshow('delaunay', self.map_rgb)
+        # cv.waitKey(0)
 
 
 class CostMapUpdater:
@@ -299,22 +288,32 @@ class MapService(object):
         pos = np.array([self.initial_pose.position.x, self.initial_pose.position.y])
         return self.position_to_map(pos)
 
+# Based on https://stackabuse.com/dijkstras-algorithm-in-python/
 class Graph:
-    def __init__(self, num_of_vertices):
-        self.v = num_of_vertices
-        self.edges = [[-1 for i in range(num_of_vertices)] for j in range(num_of_vertices)]
+    def __init__(self):
+        self.edges = {}
         self.visited = []
 
     def add_edges(self, edges):
         for e in edges:
-            self.add_edge(e[0],e[1],e[2])
+            self.add_edge(e[0], e[1], e[2])
 
     def add_edge(self, u, v, weight):
-        self.edges[u][v] = weight
-        self.edges[v][u] = weight
+        if u in self.gdict:
+            self.edges[u].append((v, weight))
+        else:
+            self.edges[u] = [(v, weight)]
 
-    def dijkstra(graph, start_vertex):
-        D = {v: float('inf') for v in range(graph.v)}
+        if v in self.gdict:
+            self.edges[v].append((u, weight))
+        else:
+            self.edges[v] = [(u, weight)]
+        # self.edges[v].append((u, weight))
+        # self.edges[v][u] = weight
+
+    def dijkstra(self, start_vertex):
+        num_vertices = len(self.edges)
+        D = {v: float('inf') for v in range(num_vertices)}
         D[start_vertex] = 0
 
         pq = PriorityQueue()
@@ -322,17 +321,15 @@ class Graph:
 
         while not pq.empty():
             (dist, current_vertex) = pq.get()
-            graph.visited.append(current_vertex)
+            self.visited.append(current_vertex)
 
-            for neighbor in range(graph.v):
-                if graph.edges[current_vertex][neighbor] != -1:
-                    dist = graph.edges[current_vertex][neighbor]
-                    if neighbor not in graph.visited:
-                        old_cost = D[neighbor]
-                        new_cost = D[current_vertex] + dist
-                        if new_cost < old_cost:
-                            pq.put((new_cost, neighbor))
-                            D[neighbor] = new_cost
+            for neighbor, dist in self.edges[current_vertex]:
+                if neighbor not in self.visited:
+                    old_cost = D[neighbor]
+                    new_cost = D[current_vertex] + dist
+                    if new_cost < old_cost:
+                        pq.put((new_cost, neighbor))
+                        D[neighbor] = new_cost
         return D
 #
 # class Graph:
@@ -394,6 +391,7 @@ def vacuum_cleaning():
 def inspection():
     print('start inspection')
     raise NotImplementedError
+
 
 class Path_finder:
     def __init__(self):
@@ -577,6 +575,7 @@ def array_to_quaternion(nparr):
     quat.w = nparr[3]
     return quat
 
+
 def movebase_client(map_service, path):
     # Create an action client called "move_base" with action definition file "MoveBaseAction"
     client = actionlib.SimpleActionClient('move_base', MoveBaseAction)
@@ -619,6 +618,7 @@ def movebase_client(map_service, path):
 
     return client.get_result()
 
+
 def plot_path(borders, path):
     x = []
     y = []
@@ -648,6 +648,7 @@ def plot_path(borders, path):
     plt.savefig("path.png")
     plt.show()
 
+
 def move_robot_on_path(map_service, path):
     try:
        # Initializes a rospy node to let the SimpleActionClient publish and subscribe
@@ -658,11 +659,12 @@ def move_robot_on_path(map_service, path):
     except rospy.ROSInterruptException:
         rospy.loginfo("Navigation Exception.")
 
+
 # If the python node is executed as main process (sourced directly)
 if __name__ == '__main__':
     rospy.init_node('get_map_example')
     ms = MapService()
-    # Edge = namedtuple('Edge', ['p1','p2'])
+
     Triangle = namedtuple('Triangle', ['coordinates', 'center', 'area', 'edges'])
 
     cb = CleaningBlocks(ms.map_arr)
