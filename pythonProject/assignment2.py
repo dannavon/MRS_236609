@@ -210,14 +210,6 @@ class MapService(object):
 # rc_DWA_client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS/")
 # rc_DWA_client.update_configuration({"max_vel_x": "np.inf"})
 
-def vacuum_cleaning():
-    print('start vacuum_cleaning')
-    raise NotImplementedError
-
-def inspection():
-    print('start inspection')
-    raise NotImplementedError
-
 class Path_finder:
     def __init__(self):
         self.error_gap                                 = 0.1
@@ -481,17 +473,13 @@ def move_robot_on_path(map_service, path):
     except rospy.ROSInterruptException:
         rospy.loginfo("Navigation Exception.")
 
-# If the python node is executed as main process (sourced directly)
-if __name__ == '__main__':
-    rospy.init_node('get_map_example')
-
-    ms      = MapService()
-    occ_map = ms.map_arr
-
+def vacuum_cleaning(ms):
+    print('start vacuum_cleaning')
     cb            = CleaningBlocks(occ_map)
     triangle_list = cb.get_triangles()
     # Draw delaunay triangles
     # cb.draw_triangles((0, 255, 0))
+
 
     triangles = []
     for t in triangle_list:
@@ -499,7 +487,7 @@ if __name__ == '__main__':
         # print(triangles[-1])
 
     # Path planning
-    path_finder   = Path_finder()
+    path_finder = Path_finder()
     borders, path = path_finder.find(triangles)
     print("Done creating the path. Length:", len(path))
 
@@ -518,13 +506,26 @@ if __name__ == '__main__':
     # Plots / Saves the path map
     # plot_path(borders=borders, path=path)
 
-    # exec_mode = sys.argv[1]
-    # print('exec_mode:' + exec_mode)
-    #
-    # if exec_mode == 'cleaning':
-    #     vacuum_cleaning()
-    # elif exec_mode == 'inspection':
-    #     inspection()
-    # else:
-    #     print("Code not found")
-    #     raise NotImplementedError
+def inspection():
+    print('start inspection')
+    raise NotImplementedError
+
+# If the python node is executed as main process (sourced directly)
+if __name__ == '__main__':
+    rospy.init_node('get_map_example')
+
+    ms      = MapService()
+    occ_map = ms.map_arr
+
+    exec_mode = sys.argv[1]
+    exec_mode = 'cleaning'
+    print('exec_mode:' + exec_mode)
+    if exec_mode == 'cleaning':
+        vacuum_cleaning(ms=ms)
+    elif exec_mode == 'inspection':
+        inspection()
+    else:
+        print("Code not found")
+        raise NotImplementedError
+
+
