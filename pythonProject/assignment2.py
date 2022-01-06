@@ -1,8 +1,10 @@
 #!/usr/bin/env python2.7
 
 import rospy
+import tf
 import actionlib
 import sys
+import time
 import math
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -12,7 +14,7 @@ import matplotlib.pyplot as plt
 
 from tf.transformations import euler_from_quaternion, quaternion_from_euler
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
-from geometry_msgs.msg import PoseWithCovarianceStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped, Quaternion
 from nav_msgs.srv import GetMap
 from nav_msgs.msg import OccupancyGrid, Odometry
 from map_msgs.msg import OccupancyGridUpdate
@@ -190,30 +192,27 @@ class MapService(object):
         plt.show()
 
     def position_to_map(self, pos):
-        print(pos)
-        print(self.map_org)
-        print(self.resolution)
+        # print("pos", pos)
+        # print("self.map_org", self.map_org)
+        # print("self.resolution", self.resolution)
         return (pos - self.map_org) // self.resolution
 
     def map_to_position(self, indices):
         return indices * self.resolution + self.map_org
 
     def init_pose(self, msg):
-        self.initial_pose = msg.pose.pose
-        print("initial pose is")
-        print("X=" + str(self.initial_pose.position.x))
-        print("y=" + str(self.initial_pose.position.y))
-
+        self.initial_pose = self.position_to_map(pos=np.array([msg.pose.pose.position.x, msg.pose.pose.position.y]))
+        # print("initial pose is")
+        # print("X=" + str(self.initial_pose[0]))
+        # print("y=" + str(self.initial_pose[1]))
 
 # For anyone who wants to change parameters of move_base in python, here is an example:
 # rc_DWA_client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS/")
 # rc_DWA_client.update_configuration({"max_vel_x": "np.inf"})
 
-
 def vacuum_cleaning():
     print('start vacuum_cleaning')
     raise NotImplementedError
-
 
 def inspection():
     print('start inspection')
@@ -222,7 +221,7 @@ def inspection():
 class Path_finder:
     def __init__(self):
         self.error_gap                                 = 0.1
-        self.robot_width                               = 3.0#0.105
+        self.robot_width                               = 8.0#3.0#0.105
         self.divide_walk_every                         = (10.0 / 3.0)#(1.0 / 3.0)
         self.robot_width_with_error_gap             = self.robot_width * (1.0 + max(0.0, self.error_gap))
         self.distance_to_stop_before_and_after_corner  = self.robot_width_with_error_gap
@@ -268,26 +267,28 @@ class Path_finder:
                 direction_vector_new_len = direction_vector_len - (distance_decrease_multiplier * self.distance_to_stop_before_and_after_corner)
                 direction_vector_new_len = max(direction_vector_new_len, self.distance_to_stop_before_and_after_corner)
                 number_of_segments       = direction_vector_new_len / self.divide_walk_every
+                new_direction_vector = np.array((current_path_triangle[0][start_index], current_path_triangle[1][start_index], 0)) + direction_vector_norm * self.distance_to_stop_before_and_after_corner#(0 * self.divide_walk_every)
+                final_path.append({"position": (new_direction_vector[0], new_direction_vector[1]), "angle": yaw_angle})
                 i                        = 1.0
                 while i < number_of_segments:
-                    new_direction_vector = np.array((current_path_triangle[0][start_index], current_path_triangle[1][start_index], 0)) + direction_vector_norm * (i * self.divide_walk_every)
+                    new_direction_vector = np.array((current_path_triangle[0][start_index], current_path_triangle[1][start_index], 0)) + direction_vector_norm * min((self.distance_to_stop_before_and_after_corner + (i * self.divide_walk_every)), direction_vector_new_len)
                     final_path.append({"position": (new_direction_vector[0], new_direction_vector[1]), "angle": yaw_angle})
                     i += 1.0
                 new_direction_vector = np.array((current_path_triangle[0][start_index], current_path_triangle[1][start_index], 0)) + direction_vector_norm * direction_vector_new_len
                 final_path.append({"position": (new_direction_vector[0], new_direction_vector[1]), "angle": yaw_angle})
 
-            def add_corner_turn(final_path, current_path_triangle, start_index):
-                yaw_angle                = math.atan2(current_path_triangle[1][start_index + 3] - current_path_triangle[1][start_index + 2], current_path_triangle[0][start_index + 3] - current_path_triangle[0][start_index + 2])
-                direction_vector         = np.array((current_path_triangle[0][start_index + 3] - current_path_triangle[0][start_index + 2], current_path_triangle[1][start_index + 3] - current_path_triangle[1][start_index + 2], 0))
-                direction_vector_len     = np.linalg.norm(direction_vector)
-                direction_vector_norm    = direction_vector / direction_vector_len
-                direction_vector_new_len = self.distance_to_stop_before_and_after_corner
-                new_direction_vector     = np.array((current_path_triangle[0][start_index + 2], current_path_triangle[1][start_index + 2], 0)) + direction_vector_norm * direction_vector_new_len
-                final_path.append({"position": (new_direction_vector[0], new_direction_vector[1]), "angle": yaw_angle})
+            # def add_corner_turn(final_path, current_path_triangle, start_index):
+            #     yaw_angle                = math.atan2(current_path_triangle[1][start_index + 3] - current_path_triangle[1][start_index + 2], current_path_triangle[0][start_index + 3] - current_path_triangle[0][start_index + 2])
+            #     direction_vector         = np.array((current_path_triangle[0][start_index + 3] - current_path_triangle[0][start_index + 2], current_path_triangle[1][start_index + 3] - current_path_triangle[1][start_index + 2], 0))
+            #     direction_vector_len     = np.linalg.norm(direction_vector)
+            #     direction_vector_norm    = direction_vector / direction_vector_len
+            #     direction_vector_new_len = self.distance_to_stop_before_and_after_corner
+            #     new_direction_vector     = np.array((current_path_triangle[0][start_index + 2], current_path_triangle[1][start_index + 2], 0)) + direction_vector_norm * direction_vector_new_len
+            #     final_path.append({"position": (new_direction_vector[0], new_direction_vector[1]), "angle": yaw_angle})
 
             def add_straight_walk_and_corner_turn(final_path, current_path_triangle, start_index):
                 add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=start_index, distance_decrease_multiplier=1)
-                add_corner_turn(final_path=final_path, current_path_triangle=current_path_triangle, start_index=start_index)
+                # add_corner_turn(final_path=final_path, current_path_triangle=current_path_triangle, start_index=start_index)
 
             for j in range(1, len(current_path_triangles)):
                 current_path_triangle = current_path_triangles[j]
@@ -304,10 +305,10 @@ class Path_finder:
         while True:
             self.add_triangle_to_list(lines, triangle_point_1, triangle_point_2, triangle_point_3)
             if first:
-                self.margin_between_outter_and_inner_triangles = self.line_thickness_with_error_gap / 2
+                self.margin_between_outter_and_inner_triangles = self.robot_width_with_error_gap / 2
                 first = False
             else:
-                self.margin_between_outter_and_inner_triangles = self.line_thickness_with_error_gap
+                self.margin_between_outter_and_inner_triangles = self.robot_width_with_error_gap
             inner_triangle_point_1 = self.find_inner_triangle_point(triangle_point_1, triangle_point_3, triangle_point_2)
             if inner_triangle_point_1 is None:
                 return
@@ -399,7 +400,20 @@ class Path_finder:
             rcond=None
         )[0][:, 0]
 
-def movebase_client(path):
+
+def array_to_quaternion(nparr):
+    '''
+    Takes a numpy array holding the members of a quaternion and returns it as a
+    geometry_msgs.msg.Quaternion message instance.
+    '''
+    quat = Quaternion()
+    quat.x = nparr[0]
+    quat.y = nparr[1]
+    quat.z = nparr[2]
+    quat.w = nparr[3]
+    return quat
+
+def movebase_client(map_service, path):
     # Create an action client called "move_base" with action definition file "MoveBaseAction"
     client = actionlib.SimpleActionClient('move_base', MoveBaseAction)
 
@@ -407,17 +421,19 @@ def movebase_client(path):
     client.wait_for_server()
 
     for current_goal in path:
-        # Creates a new goal with the MoveBaseGoal constructor
+        # Creates a MoveBaseGoal object
         goal = MoveBaseGoal()
         goal.target_pose.header.frame_id = "map"
-        # Move to position 0.5 on the x axis of the "map" coordinate frame
-        goal.target_pose.pose.position.x = current_goal["position"][0]
-        # Move to position 0.5 on the y axis of the "map" coordinate frame
-        goal.target_pose.pose.position.y = current_goal["position"][1]
-        # No rotation of the mobile base frame w.r.t. map frame
-        quat = quaternion_from_euler(0, 0, current_goal["angle"])
-        print(quat[0], quat[1], quat[2], quat[3])
-        goal.target_pose.pose.orientation.w = quat[3]
+
+        # Calculates the goal's pose
+        # Calculates the goal's position
+        position = map_service.map_to_position(indices=np.array((current_goal["position"][0], current_goal["position"][1])))
+        goal.target_pose.pose.position.x = position[0]
+        goal.target_pose.pose.position.y = position[1]
+        # Calculates the goal's angle
+        quaternionArray = tf.transformations.quaternion_about_axis(current_goal["angle"], (0, 0, 1))
+        goal.target_pose.pose.orientation = array_to_quaternion(quaternionArray)
+
         # Saves the current time
         goal.target_pose.header.stamp = rospy.Time.now()
 
@@ -439,37 +455,48 @@ def movebase_client(path):
 
     return client.get_result()
 
-def initialposeCb(msg):
-    initial_pose = msg.pose.pose
-    print("initial pose is")
-    print("X=" + str(initial_pose.position.x))
-    print("y=" + str(initial_pose.position.y))
+def plot_path(borders, path):
+    x = []
+    y = []
+    for i in range(len(path) - 1):
+        x.append(path[i    ]["position"][0])
+        y.append(path[i    ]["position"][1])
+        x.append(path[i + 1]["position"][0])
+        y.append(path[i + 1]["position"][1])
+        angle_radian    = path[i]["angle"]
+        rotation_matrix = R.from_euler('z', angle_radian, degrees=False)
+        rotated_vector  = rotation_matrix.apply(np.array((0.05, 0.0, 0.0)))
+        # plt.arrow(x=path[i]["position"][0], y=path[i]["position"][1], dx=rotated_vector[0], dy=rotated_vector[1], width=0.5)#.015)
+    for i in range(len(borders)):
+        plt.plot(np.array(borders[i][0]), np.array(borders[i][1]))
+    plt.plot(np.array(x), np.array(y))
+    plt.annotate(
+        'Start', xy=(x[0], y[0]), xytext=(x[0], y[0] - 0.5),
+        horizontalalignment="center",
+        arrowprops=dict(arrowstyle='->', lw=1)
+    )
+    plt.annotate(
+        'End', xy=(x[-1], y[-1]), xytext=(x[-1], y[-1] + 0.75),
+        horizontalalignment="center",
+        arrowprops=dict(arrowstyle='->', lw=1)
+    )
+    plt.axis('scaled')
+    plt.savefig("path.png")
+    plt.show()
 
-    # position_x, position_y, position_z = msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z
-    # orientation_w, orientation_x, orientation_y, orientation_z = msg.pose.pose.orientation.w, msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z
-    # (roll, pitch, yaw) = euler_from_quaternion([orientation_x, orientation_y, orientation_z, orientation_w])
-    # # roll, pitch, yaw = np.degrees(roll), np.degrees(pitch), np.degrees(yaw)
-    # print("initialposeCb Position: x: {x}, y: {y}, y: {z}".format(x=position_x, y=position_y, z=position_z))
-    # print("initialposeCb Rotation: pitch: {pitch}, roll: {roll}, yaw: {yaw}".format(pitch=pitch, roll=roll, yaw=yaw))
-    # print("Orientation: w: {w}, x: {x}, y: {y}, y: {z}".format(w=orientation_w, x=orientation_x, y=orientation_y, z=orientation_z))
-    # quat = quaternion_from_euler(roll, pitch, yaw)
-
-def odometryCb(msg):
-    position_x, position_y, position_z = msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z
-    orientation_w, orientation_x, orientation_y, orientation_z = msg.pose.pose.orientation.w, msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z
-    (roll, pitch, yaw) = euler_from_quaternion([orientation_x, orientation_y, orientation_z, orientation_w])
-
-    # roll, pitch, yaw = np.degrees(roll), np.degrees(pitch), np.degrees(yaw)
-    # print("odometryCb Position: x: {x}, y: {y}, y: {z}".format(x=position_x, y=position_y, z=position_z))
-    # print("odometryCb Rotation: pitch: {pitch}, roll: {roll}, yaw: {yaw}".format(pitch=pitch, roll=roll, yaw=yaw))
-    # print("Orientation: w: {w}, x: {x}, y: {y}, y: {z}".format(w=orientation_w, x=orientation_x, y=orientation_y, z=orientation_z))
-    # quat = quaternion_from_euler(roll, pitch, yaw)
+def move_robot_on_path(map_service, path):
+    try:
+       # Initializes a rospy node to let the SimpleActionClient publish and subscribe
+       #  rospy.init_node('movebase_client_py')
+        result = movebase_client(map_service=ms, path=path)
+        if result:
+            rospy.loginfo("Goal execution done!")
+    except rospy.ROSInterruptException:
+        rospy.loginfo("Navigation Exception.")
 
 # If the python node is executed as main process (sourced directly)
 if __name__ == '__main__':
     rospy.init_node('get_map_example')
-    sub_PoseWithCovarianceStamped = rospy.Subscriber('/initialpose', PoseWithCovarianceStamped, initialposeCb)
-    # sub_Odometry = rospy.Subscriber('odom', Odometry, odometryCb)
 
     ms      = MapService()
     occ_map = ms.map_arr
@@ -482,55 +509,27 @@ if __name__ == '__main__':
     triangles = []
     for t in triangle_list:
         triangles.append((np.array((t[0], t[1], 0)), np.array((t[4], t[5], 0)), np.array((t[2], t[3], 0))))
-        # triangles.append((np.array((t[0], t[1], 0)), np.array((t[2], t[3], 0)), np.array((t[4], t[5], 0))))
         # print(triangles[-1])
 
     # Path planning
     path_finder   = Path_finder()
     borders, path = path_finder.find(triangles)
-    print("Done creating the path.")
-    print("path length:", len(path))
-    # rospy.sleep(1.)
-    # rospy.spin()
+    print("Done creating the path. Length:", len(path))
+
+    # Waits for YOU to set the initial_pose
+    i = 0
+    while ms.initial_pose is None:
+        if i % 5 == 0:
+            print("Waiting for initial_pose. i =", i)
+        i += 1
+        time.sleep(1.0)
+    # print("initial_pose:", ms.initial_pose)
 
     # Moves the robot according to the path
-    try:
-       # Initializes a rospy node to let the SimpleActionClient publish and subscribe
-       #  rospy.init_node('movebase_client_py')
-        result = movebase_client(path=path)
-        if result:
-            rospy.loginfo("Goal execution done!")
-    except rospy.ROSInterruptException:
-        rospy.loginfo("Navigation Exception.")
+    move_robot_on_path(map_service=ms, path=path)
 
     # Plots / Saves the path map
-    # x = []
-    # y = []
-    # for i in range(len(path) - 1):
-    #     x.append(path[i    ]["position"][0])
-    #     y.append(path[i    ]["position"][1])
-    #     x.append(path[i + 1]["position"][0])
-    #     y.append(path[i + 1]["position"][1])
-    #     angle_radian    = path[i]["angle"]
-    #     rotation_matrix = R.from_euler('z', angle_radian, degrees=False)
-    #     rotated_vector  = rotation_matrix.apply(np.array((0.05, 0.0, 0.0)))
-    #     plt.arrow(x=path[i]["position"][0], y=path[i]["position"][1], dx=rotated_vector[0], dy=rotated_vector[1], width=0.5)#.015)
-    # for i in range(len(borders)):
-    #     plt.plot(np.array(borders[i][0]), np.array(borders[i][1]))
-    # plt.plot(np.array(x), np.array(y))
-    # plt.annotate(
-    #     'Start', xy=(x[0], y[0]), xytext=(x[0], y[0] - 0.5),
-    #     horizontalalignment="center",
-    #     arrowprops=dict(arrowstyle='->', lw=1)
-    # )
-    # plt.annotate(
-    #     'End', xy=(x[-1], y[-1]), xytext=(x[-1], y[-1] + 0.75),
-    #     horizontalalignment="center",
-    #     arrowprops=dict(arrowstyle='->', lw=1)
-    # )
-    # plt.axis('scaled')
-    # plt.savefig("path.png")
-    # # plt.show()
+    # plot_path(borders=borders, path=path)
 
     # exec_mode = sys.argv[1]
     # print('exec_mode:' + exec_mode)
