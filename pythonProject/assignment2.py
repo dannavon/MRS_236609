@@ -1,32 +1,29 @@
 #!/usr/bin/env python2.7
-import time
-from collections import namedtuple
 
-# from typing import List, Set, Any
-from Queue import PriorityQueue
-from scipy.spatial.transform import Rotation as R
-
-import rospy
-import tf
-import actionlib
-import sys
 import time
 import math
 import numpy as np
+
+import Christofides
+
+import rospy
+import actionlib
+# import tf
+import sys
 import cv2 as cv
-
-from geometry_msgs.msg import PoseWithCovarianceStamped
-from nav_msgs.srv import GetMap
-
 import matplotlib.pyplot as plt
 
-from tf.transformations import euler_from_quaternion, quaternion_from_euler
+
+# from tf.transformations import euler_from_quaternion, quaternion_from_euler
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from geometry_msgs.msg import PoseWithCovarianceStamped, Quaternion
 from nav_msgs.srv import GetMap
 from nav_msgs.msg import OccupancyGrid, Odometry
 from map_msgs.msg import OccupancyGridUpdate
-import dynamic_reconfigure.client
+
+from collections import namedtuple
+from Queue import PriorityQueue
+from scipy.spatial.transform import Rotation as R
 
 
 # Check if a point is inside a rectangle
@@ -51,13 +48,14 @@ def distance(a,b):
     return np.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
 
 
-def is_same_edge(e1,e2):
-    return (e1.p1 == e2.p1 and e1.p2 == e2.p2) or (e1.p1 == e2.p2 and e1.p2 == e2.p1)
+def is_same_edge(e1, e2):
+    return (e1[0] == e2[0] and e1[1] == e2[1]) or (e1[0] == e2[1] and e1[1] == e2[0])
+
 
 class CleaningBlocks:
 
     def __init__(self, occ_map):
-        self.triangles = None
+        self.triangles = []
         self.occ_map = occ_map
         self.map_size = occ_map.shape
         self.rect = (0, 0, self.map_size[1], self.map_size[0])
@@ -104,10 +102,9 @@ class CleaningBlocks:
                                  [pt2, pt3, distance(pt2, pt3)]]
                     # center_edges = [[pt1, center, distance(pt1, center)], [pt1, center, distance(pt1, center)],
                     #                 [pt2, center, distance(pt2, center)]]
-                    filtered_triangles.append(Triangle(t, center, area, tri_edges))
-                    self.add_adjacent_tri_edge(len(filtered_triangles))
-
-        self.triangles = filtered_triangles
+                    self.triangles.append(Triangle(t, center, area, tri_edges))
+                    last_tri_ind = len(self.triangles)-1
+                    self.add_adjacent_tri_edge(last_tri_ind)
 
     def get_triangles(self):
         return self.triangles
@@ -127,8 +124,8 @@ class CleaningBlocks:
             cv.line(img, pt2, pt3, delaunay_color, 1, cv.LINE_AA, 0)
             cv.line(img, pt3, pt1, delaunay_color, 1, cv.LINE_AA, 0)
             cv.line(img, pt1, pt2, delaunay_color, 1, cv.LINE_AA, 0)
-            # cv.imshow('delaunay', img)
-            # cv.waitKey(0)
+            cv.imshow('delaunay', img)
+            cv.waitKey(0)
 
         # Show results
         cv.imshow('delaunay', img)
@@ -174,11 +171,11 @@ class CleaningBlocks:
         return False
 
     def add_adjacent_tri_edge(self, last_tri_ind):
-        for i in range(last_tri_ind-1):
+        for i in range(last_tri_ind):
             if self.is_neighbor(i, last_tri_ind):
                 a = self.triangles[i].center
                 b = self.triangles[last_tri_ind].center
-                self.graph.add_edges([i, last_tri_ind, distance(a, b)])
+                self.graph.add_edge(i, last_tri_ind, distance(a, b))
 
     def is_neighbor(self, v_i, u_i):
         v_edges = self.triangles[v_i].edges
@@ -205,8 +202,15 @@ class CleaningBlocks:
     def sort(self, first_pose):
 
         starting_point_ind = self.locate_initial_pose(first_pose)
-        dist_vector = self.graph.dijkstra(starting_point_ind)
-        print(dist_vector)
+        dist_mat=[]
+        for i in range(len(self.triangles)):
+            dist_vector = self.graph.dijkstra(i)
+            dist_mat.append(dist_vector.values())
+            print(dist_vector)
+
+        print(dist_mat)
+        TSP = Christofides.christofides.compute(dist_mat)
+        print(TSP)
         # compute_dist_mat()
 
         # t = closest_tri.coordinates
@@ -299,12 +303,12 @@ class Graph:
             self.add_edge(e[0], e[1], e[2])
 
     def add_edge(self, u, v, weight):
-        if u in self.gdict:
+        if u in self.edges:
             self.edges[u].append((v, weight))
         else:
             self.edges[u] = [(v, weight)]
 
-        if v in self.gdict:
+        if v in self.edges:
             self.edges[v].append((u, weight))
         else:
             self.edges[v] = [(u, weight)]
@@ -330,6 +334,7 @@ class Graph:
                     if new_cost < old_cost:
                         pq.put((new_cost, neighbor))
                         D[neighbor] = new_cost
+        self.visited = []
         return D
 #
 # class Graph:
@@ -674,7 +679,7 @@ if __name__ == '__main__':
     cb.sort(first_pose)
 
     # Draw delaunay triangles
-    # cb.draw_triangles((0, 255, 0))
+    cb.draw_triangles((0, 255, 0))
 
     triangles = []  # Tom's format
     for triangle in triangle_list:
