@@ -6,13 +6,13 @@ import numpy as np
 
 import rospy
 import actionlib
-import tf
+# import tf
 import sys
 import cv2 as cv
 import matplotlib.pyplot as plt
 
 
-from tf.transformations import euler_from_quaternion, quaternion_from_euler
+# from tf.transformations import euler_from_quaternion, quaternion_from_euler
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from geometry_msgs.msg import PoseWithCovarianceStamped, Quaternion
 from nav_msgs.srv import GetMap
@@ -92,8 +92,11 @@ class CleaningBlocks:
             mid2 = (np.uint32((t[3] + t[5]) / 2), np.uint32((t[2] + t[4]) / 2))
             mid3 = (np.uint32((t[1] + t[5]) / 2), np.uint32((t[0] + t[4]) / 2))
             if rect_contains(r, pt1) and rect_contains(r, pt2) and rect_contains(r, pt3):
-                if self.line_in_room(mid1) and self.line_in_room(mid2) and self.line_in_room(mid3):
-                    center = (np.round((t[0] + t[2] + t[4]) / 3), np.round((t[1] + t[3] + t[5]) / 3))
+                center = (np.round((t[0] + t[2] + t[4]) / 3),np.round((t[1] + t[3] + t[5]) / 3))
+                center2 = (np.uint32(np.round((t[1] + t[3] + t[5]) / 3)), np.uint32(np.round((t[0] + t[2] + t[4]) / 3)))
+
+                if self.point_in_room(center2):
+                # if self.line_in_room(mid1) and self.line_in_room(mid2) and self.line_in_room(mid3):
                     mat = np.array([[t[0], t[1], 1], [t[2], t[3], 1], [t[4], t[5], 1]])
                     area = np.linalg.det(mat) / 2
 
@@ -131,43 +134,49 @@ class CleaningBlocks:
         cv.waitKey(0)
         # cv.imwrite('delaunay.jpg', img)
 
-    def line_in_room(self, mid_p_i):
-
+    def point_in_room(self, mid_p_i):
         map = self.occ_map
-
         if map[mid_p_i] != -1:  # mid pixel
             return True
-
-        size = map.shape
-        if mid_p_i[0] > 0:
-            if map[(mid_p_i[0] - 1, mid_p_i[1])] != -1:  # left pixel
-                return True
-            if mid_p_i[1] > 0:  # left up pixel
-                if map[(mid_p_i[0] - 1, mid_p_i[1] - 1)] != -1:
-                    return True
-            if mid_p_i[1] < size[0] - 1:  # left down pixel
-                if map[(mid_p_i[0] - 1, mid_p_i[1] + 1)] != -1:
-                    return True
-
-        if mid_p_i[0] < size[1] - 1:
-            if map[(mid_p_i[0] + 1, mid_p_i[1])] != -1:  # right pixel
-                return True
-            if mid_p_i[1] > 0:  # left up pixel
-                if map[(mid_p_i[0] + 1, mid_p_i[1] - 1)] != -1:
-                    return True
-            if mid_p_i[1] < size[0] - 1:  # left down pixel
-                if map[(mid_p_i[0] + 1, mid_p_i[1] + 1)] != -1:
-                    return True
-
-        if mid_p_i[1] > 0 and \
-                map[(mid_p_i[0], mid_p_i[1] - 1)] != -1:  # up pixel
-            return True
-
-        if mid_p_i[1] < size[0] - 1 and \
-                map[(mid_p_i[0], mid_p_i[1] + 1)] != -1:  # down pixel
-            return True
-
         return False
+
+    # def line_in_room(self, mid_p_i):
+    #
+    #     map = self.occ_map
+    #
+    #     if map[mid_p_i] != -1:  # mid pixel
+    #         return True
+    #
+    #     size = map.shape
+    #     if mid_p_i[0] > 0:
+    #         if map[(mid_p_i[0] - 1, mid_p_i[1])] != -1:  # left pixel
+    #             return True
+    #         if mid_p_i[1] > 0:  # left up pixel
+    #             if map[(mid_p_i[0] - 1, mid_p_i[1] - 1)] != -1:
+    #                 return True
+    #         if mid_p_i[1] < size[0] - 1:  # left down pixel
+    #             if map[(mid_p_i[0] - 1, mid_p_i[1] + 1)] != -1:
+    #                 return True
+    #
+    #     if mid_p_i[0] < size[1] - 1:
+    #         if map[(mid_p_i[0] + 1, mid_p_i[1])] != -1:  # right pixel
+    #             return True
+    #         if mid_p_i[1] > 0:  # left up pixel
+    #             if map[(mid_p_i[0] + 1, mid_p_i[1] - 1)] != -1:
+    #                 return True
+    #         if mid_p_i[1] < size[0] - 1:  # left down pixel
+    #             if map[(mid_p_i[0] + 1, mid_p_i[1] + 1)] != -1:
+    #                 return True
+    #
+    #     if mid_p_i[1] > 0 and \
+    #             map[(mid_p_i[0], mid_p_i[1] - 1)] != -1:  # up pixel
+    #         return True
+    #
+    #     if mid_p_i[1] < size[0] - 1 and \
+    #             map[(mid_p_i[0], mid_p_i[1] + 1)] != -1:  # down pixel
+    #         return True
+    #
+    #     return False
 
     def add_adjacent_tri_edge(self, last_tri_ind):
         for i in range(last_tri_ind):
@@ -177,8 +186,16 @@ class CleaningBlocks:
                 self.graph.add_edge(i, last_tri_ind, distance(a, b))
 
     def is_neighbor(self, v_i, u_i):
+        v_cor = self.triangles[v_i].coordinates
+        u_cor = self.triangles[u_i].coordinates
         v_edges = self.triangles[v_i].edges
         u_edges = self.triangles[u_i].edges
+        # indices = range(0, 6, 2)
+        # for i in indices:
+        #     for j in indices:
+        #         if v_cor[i] == u_cor[j]:
+        #             if v_cor[i+1] == u_cor[j+1]:
+        #                 return True
         for e1 in v_edges:
             for e2 in u_edges:
                 if is_same_edge(e1, e2):
@@ -638,6 +655,7 @@ if __name__ == '__main__':
     cb = CleaningBlocks(ms.map_arr)
 
     triangle_list = cb.get_triangles()
+
     first_pose = ms.get_first_pose()
     tri_order = cb.sort(first_pose)
 
