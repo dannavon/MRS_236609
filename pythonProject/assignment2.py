@@ -1,7 +1,7 @@
 #!/usr/bin/env python2.7
 
 import rospy
-# import tf
+import tf
 import actionlib
 import sys
 import time
@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
 from scipy.misc import toimage
 from scipy import ndimage
-# from tf.transformations import euler_from_quaternion, quaternion_from_euler
+from tf.transformations import euler_from_quaternion, quaternion_from_euler
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from geometry_msgs.msg import PoseWithCovarianceStamped, Quaternion
 from nav_msgs.srv import GetMap
