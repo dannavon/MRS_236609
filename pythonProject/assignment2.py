@@ -239,7 +239,7 @@ class CleaningBlocks:
             dist_vector = self.graph.dijkstra(i)
             dist_mat.append(dist_vector.values())
             dict_vector.append(dist_vector)
-            print(dist_vector)
+            # print(dist_vector)
 
         triangle_order = [starting_point_ind]
         curr = starting_point_ind
