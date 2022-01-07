@@ -1,7 +1,7 @@
 #!/usr/bin/env python2.7
 
 import rospy
-import tf
+# import tf
 import actionlib
 import sys
 import time
@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
 from scipy.misc import toimage
 from scipy import ndimage
-from tf.transformations import euler_from_quaternion, quaternion_from_euler
+# from tf.transformations import euler_from_quaternion, quaternion_from_euler
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from geometry_msgs.msg import PoseWithCovarianceStamped, Quaternion
 from nav_msgs.srv import GetMap
@@ -135,49 +135,12 @@ class CleaningBlocks:
         cv.waitKey(0)
         # cv.imwrite('delaunay.jpg', img)
 
-    def point_in_room(self, mid_p_i):
+    def point_in_room(self, mid_p_i): #Funny - tried to check lines
         map = self.occ_map
         if map[mid_p_i] != -1:  # mid pixel
             return True
         return False
 
-    # def line_in_room(self, mid_p_i):
-    #
-    #     map = self.occ_map
-    #
-    #     if map[mid_p_i] != -1:  # mid pixel
-    #         return True
-    #
-    #     size = map.shape
-    #     if mid_p_i[0] > 0:
-    #         if map[(mid_p_i[0] - 1, mid_p_i[1])] != -1:  # left pixel
-    #             return True
-    #         if mid_p_i[1] > 0:  # left up pixel
-    #             if map[(mid_p_i[0] - 1, mid_p_i[1] - 1)] != -1:
-    #                 return True
-    #         if mid_p_i[1] < size[0] - 1:  # left down pixel
-    #             if map[(mid_p_i[0] - 1, mid_p_i[1] + 1)] != -1:
-    #                 return True
-    #
-    #     if mid_p_i[0] < size[1] - 1:
-    #         if map[(mid_p_i[0] + 1, mid_p_i[1])] != -1:  # right pixel
-    #             return True
-    #         if mid_p_i[1] > 0:  # left up pixel
-    #             if map[(mid_p_i[0] + 1, mid_p_i[1] - 1)] != -1:
-    #                 return True
-    #         if mid_p_i[1] < size[0] - 1:  # left down pixel
-    #             if map[(mid_p_i[0] + 1, mid_p_i[1] + 1)] != -1:
-    #                 return True
-    #
-    #     if mid_p_i[1] > 0 and \
-    #             map[(mid_p_i[0], mid_p_i[1] - 1)] != -1:  # up pixel
-    #         return True
-    #
-    #     if mid_p_i[1] < size[0] - 1 and \
-    #             map[(mid_p_i[0], mid_p_i[1] + 1)] != -1:  # down pixel
-    #         return True
-    #
-    #     return False
 
     def add_adjacent_tri_edge(self, last_tri_ind):
         for i in range(last_tri_ind):
@@ -186,7 +149,7 @@ class CleaningBlocks:
                 b = self.triangles[last_tri_ind].center
                 self.graph.add_edge(i, last_tri_ind, distance(a, b))
 
-    def is_neighbor(self, v_i, u_i):
+    def is_neighbor(self, v_i, u_i): #Funny
         v_cor = self.triangles[v_i].coordinates
         u_cor = self.triangles[u_i].coordinates
         v_edges = self.triangles[v_i].edges
@@ -219,13 +182,12 @@ class CleaningBlocks:
     def draw_triangle_order(self):
         img = self.map_rgb
         triangle_order=self.triangle_order
-        for (i, ind1) in enumerate(triangle_order):
-            c1 = self.triangles[ind1].center
+        for (i, tri) in enumerate(self.triangles):
+            c1 = tri.center
             c1 = tuple(np.uint32((round(c1[0]), round(c1[1]))))
 
             if i < len(triangle_order)-1:
-                ind2 = triangle_order[i+1]
-                c2 = self.triangles[ind2].center
+                c2 = self.triangles[i+1].center
                 c2 = tuple(np.uint32((round(c2[0]), round(c2[1]))))
                 cv.line(img, c1, c2, (255, 0, i * 7), 1, cv.LINE_AA, 0)
 
@@ -259,6 +221,14 @@ class CleaningBlocks:
         # print(dist_mat)
         # print(triangle_order)
         self.triangle_order = triangle_order
+        sorted_triangles = [None] * len(self.triangle_order)
+        j = 0
+        for i in self.triangle_order:
+            sorted_triangles[j] = self.triangles[i]
+            j += 1
+
+        self.triangles = sorted_triangles
+        return self.triangles
 
 class CostMapUpdater:
 
@@ -649,8 +619,8 @@ def vacuum_cleaning(ms):
     triangle_list = cb.sort(first_pose)
 
     # Draw delaunay triangles
-    # cb.draw_triangle_order()
-    # cb.draw_triangles((0, 255, 0))
+    cb.draw_triangle_order()
+    cb.draw_triangles((0, 255, 0))
     triangles = []  # Tom's format
     for triangle in triangle_list:
         t = triangle.coordinates
@@ -794,12 +764,12 @@ if __name__ == '__main__':
 
 
 
-    # exec_mode = sys.argv[1]
+    exec_mode = sys.argv[1]
 
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
     # exec_mode = 'cleaning'
-    exec_mode = 'inspection'
+    # exec_mode = 'inspection'
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
 
