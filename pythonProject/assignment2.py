@@ -4,18 +4,15 @@ import time
 import math
 import numpy as np
 
-# import Christofides
-import Christofides as Christofides
-
 import rospy
 import actionlib
-# import tf
+import tf
 import sys
 import cv2 as cv
 import matplotlib.pyplot as plt
 
 
-# from tf.transformations import euler_from_quaternion, quaternion_from_euler
+from tf.transformations import euler_from_quaternion, quaternion_from_euler
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from geometry_msgs.msg import PoseWithCovarianceStamped, Quaternion
 from nav_msgs.srv import GetMap
@@ -57,6 +54,7 @@ class CleaningBlocks:
 
     def __init__(self, occ_map):
         self.triangles = []
+        self.triangle_order = []
         self.occ_map = occ_map
         self.map_size = occ_map.shape
         self.rect = (0, 0, self.map_size[1], self.map_size[0])
@@ -125,8 +123,8 @@ class CleaningBlocks:
             cv.line(img, pt2, pt3, delaunay_color, 1, cv.LINE_AA, 0)
             cv.line(img, pt3, pt1, delaunay_color, 1, cv.LINE_AA, 0)
             cv.line(img, pt1, pt2, delaunay_color, 1, cv.LINE_AA, 0)
-            cv.imshow('delaunay', img)
-            cv.waitKey(0)
+            # cv.imshow('delaunay', img)
+            # cv.waitKey(0)
 
         # Show results
         cv.imshow('delaunay', img)
@@ -200,6 +198,21 @@ class CleaningBlocks:
                 ind = i
         return ind
 
+    def draw_triangle_order(self):
+        img = self.map_rgb
+        triangle_order=self.triangle_order
+        for (i, ind1) in enumerate(triangle_order):
+            c1 = self.triangles[ind1].center
+            c1 = tuple(np.uint32((round(c1[0]), round(c1[1]))))
+
+            if i < len(triangle_order)-1:
+                ind2 = triangle_order[i+1]
+                c2 = self.triangles[ind2].center
+                c2 = tuple(np.uint32((round(c2[0]), round(c2[1]))))
+                cv.line(img, c1, c2, (255, 0, i * 7), 1, cv.LINE_AA, 0)
+
+            cv.circle(img, c1, 2, (255, 0, i * 7), cv.FILLED, cv.LINE_AA)
+
     def sort(self, first_pose):
 
         starting_point_ind = self.locate_initial_pose(first_pose)
@@ -225,25 +238,9 @@ class CleaningBlocks:
                 if key is not curr:
                     dict_vector[key].pop(curr)
             curr = next
-        print(dist_mat)
-        print(triangle_order)
-        # TSP = Christofides.christofides.compute(dist_mat)
-        # print(TSP)
-        # compute_dist_mat()
-
-        # t = closest_tri.coordinates
-        # pt1 = (t[0], t[1])
-        # pt2 = (t[2], t[3])
-        # pt3 = (t[4], t[5])
-        # img = self.map_rgb
-        # cv.line(img, pt2, pt3, (255, 0, 0), 1, cv.LINE_AA, 0)
-        # cv.line(img, pt3, pt1, (255, 0, 0), 1, cv.LINE_AA, 0)
-        # cv.line(img, pt1, pt2, (255, 0, 0), 1, cv.LINE_AA, 0)
-        # draw_point(img, np.uint32(closest_tri.center), (255, 255, 0))
-        # draw_point(img, np.uint32(first_pose), (0, 255, 255))
-        # cv.imshow('delaunay', self.map_rgb)
-        # cv.waitKey(0)
-
+        # print(dist_mat)
+        # print(triangle_order)
+        self.triangle_order = triangle_order
 
 class CostMapUpdater:
 
@@ -330,8 +327,6 @@ class Graph:
             self.edges[v].append((u, weight))
         else:
             self.edges[v] = [(u, weight)]
-        # self.edges[v].append((u, weight))
-        # self.edges[v][u] = weight
 
     def dijkstra(self, start_vertex):
         num_vertices = len(self.edges)
@@ -354,56 +349,6 @@ class Graph:
                         D[neighbor] = new_cost
         self.visited = []
         return D
-#
-# class Graph:
-#     def __init__(self, gdict=None):
-#         if gdict is None:
-#             gdict = {}
-#         self.gdict = gdict
-#
-#         self.start_ind = 0
-#
-#     def add_starting_point(self, start):
-#         self.start_ind = start
-#
-#     def edges(self):
-#         return self.findedges
-#
-#     # Add the new edge
-#     def add_edge(self, edge):
-#         edge = set(edge)
-#         (vrtx1, vrtx2) = tuple(edge)
-#         if vrtx1 in self.gdict:
-#             self.gdict[vrtx1].append(vrtx2)
-#         else:
-#             self.gdict[vrtx1] = [vrtx2]
-#
-#     def add_edges(self, edges):
-#         for e in edges:
-#             self.add_edge(e)
-#
-#     # List the edge names
-#     def find_edges(self):
-#         edge_name = []  # type: List[Set[Any]]
-#         for vrtx in self.gdict:
-#             for nxtvrtx in self.gdict[vrtx]:
-#                 if {nxtvrtx, vrtx} not in edge_name:
-#                     edge_name.append({vrtx, nxtvrtx})
-#
-#         return edge_name
-#
-#     def get_vertices(self):
-#         return list(self.gdict.keys())
-#
-#     # Add the vertex as a key
-#     def add_vertex(self, vrtx):
-#         if vrtx not in self.gdict:
-#             self.gdict[vrtx] = []
-#
-#     def add_vertices(self, vertices):
-#         for (i, v) in enumerate(vertices):
-#             self.add_vertex(i)
-
 
 
 def vacuum_cleaning():
@@ -697,8 +642,8 @@ if __name__ == '__main__':
     tri_order = cb.sort(first_pose)
 
     # Draw delaunay triangles
+    cb.draw_triangle_order()
     cb.draw_triangles((0, 255, 0))
-
     triangles = []  # Tom's format
     for triangle in triangle_list:
         t = triangle.coordinates
