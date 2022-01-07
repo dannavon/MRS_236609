@@ -4,7 +4,8 @@ import time
 import math
 import numpy as np
 
-import Christofides
+# import Christofides
+import Christofides as Christofides
 
 import rospy
 import actionlib
@@ -202,15 +203,32 @@ class CleaningBlocks:
     def sort(self, first_pose):
 
         starting_point_ind = self.locate_initial_pose(first_pose)
-        dist_mat=[]
+        dist_mat = []
+        dict_vector = []
         for i in range(len(self.triangles)):
             dist_vector = self.graph.dijkstra(i)
             dist_mat.append(dist_vector.values())
+            dict_vector.append(dist_vector)
             print(dist_vector)
 
+        triangle_order = [starting_point_ind]
+        curr = starting_point_ind
+        while len(dict_vector) is not len(triangle_order):
+            min_d = np.inf
+            next = curr
+            for key, dist in dict_vector[curr].items():
+                if key is not curr and dist < min_d:
+                    min_d = dist
+                    next = key
+            triangle_order.append(next)
+            for key in dict_vector[curr].keys():
+                if key is not curr:
+                    dict_vector[key].pop(curr)
+            curr = next
         print(dist_mat)
-        TSP = Christofides.christofides.compute(dist_mat)
-        print(TSP)
+        print(triangle_order)
+        # TSP = Christofides.christofides.compute(dist_mat)
+        # print(TSP)
         # compute_dist_mat()
 
         # t = closest_tri.coordinates
@@ -676,7 +694,7 @@ if __name__ == '__main__':
 
     triangle_list = cb.get_triangles()
     first_pose = ms.get_first_pose()
-    cb.sort(first_pose)
+    tri_order = cb.sort(first_pose)
 
     # Draw delaunay triangles
     cb.draw_triangles((0, 255, 0))
