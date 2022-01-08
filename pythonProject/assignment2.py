@@ -8,6 +8,8 @@ import time
 import math
 import numpy as np
 from scipy.spatial.transform import Rotation as R
+from scipy.misc import toimage
+from scipy import ndimage
 import cv2 as cv
 
 import matplotlib.pyplot as plt
@@ -467,7 +469,7 @@ def move_robot_on_path(map_service, path):
     try:
        # Initializes a rospy node to let the SimpleActionClient publish and subscribe
        #  rospy.init_node('movebase_client_py')
-        result = movebase_client(map_service=ms, path=path)
+        result = movebase_client(map_service=map_service, path=path)
         if result:
             rospy.loginfo("Goal execution done!")
     except rospy.ROSInterruptException:
@@ -475,11 +477,12 @@ def move_robot_on_path(map_service, path):
 
 def vacuum_cleaning(ms):
     print('start vacuum_cleaning')
+
+    occ_map       = ms.map_arr
     cb            = CleaningBlocks(occ_map)
     triangle_list = cb.get_triangles()
     # Draw delaunay triangles
     # cb.draw_triangles((0, 255, 0))
-
 
     triangles = []
     for t in triangle_list:
@@ -506,24 +509,133 @@ def vacuum_cleaning(ms):
     # Plots / Saves the path map
     # plot_path(borders=borders, path=path)
 
-def inspection():
-    print('start inspection')
-    raise NotImplementedError
 
-# If the python node is executed as main process (sourced directly)
+### INSPECTION ###
+
+
+class InspectionCostmapUpdater:
+    def __init__(self, occ_map):
+        self.differences_map_file = 'differences_map.png'
+        self.occ_map              = self.binary_dilation(occ_map)
+        self.cost_map             = None
+        self.differences_map      = None
+        self.shape                = None
+        rospy.Subscriber('/move_base/global_costmap/costmap'        , OccupancyGrid      , self.init_costmap_callback  )
+        rospy.Subscriber('/move_base/global_costmap/costmap_updates', OccupancyGridUpdate, self.costmap_callback_update)
+
+    def binary_dilation(self, occ_map):
+        occ_map_ = self.map_to_binary_map(map=occ_map)
+        struct1  = ndimage.generate_binary_structure(2, 1)
+        occ_map_ = ndimage.binary_dilation(occ_map_, structure=struct1, iterations=1).astype(occ_map_.dtype)
+        return occ_map_
+
+    def map_to_binary_map(self, map):
+        map_ = np.zeros(shape=map.shape)
+        for i in range(map.shape[0]):
+            for j in range(map.shape[1]):
+                if (map[i][j] == 100.0) or (map[i][j] == 1.0):
+                    map_[i][j] = 1.0
+                else:
+                    map_[i][j] = 0.0
+        return map_
+
+    def init_costmap_callback(self, msg):
+        self.shape    = msg.info.height, msg.info.width
+        self.cost_map = np.array(msg.data).reshape(self.shape)
+
+    def costmap_callback_update(self, msg):
+        shape = msg.height, msg.width
+        data  = np.array(msg.data).reshape(shape)
+        self.cost_map[msg.y:msg.y + shape[0], msg.x: msg.x + shape[1]] = data
+        # plt.imshow(self.occ_map)
+        # plt.show()
+        # plt.imshow(self.cost_map)
+        # plt.show()
+        cost_map_ = np.where(self.cost_map < 90, 0, self.cost_map)
+        # plt.imshow(self.cost_map)
+        # plt.show()
+        cost_map_ = self.map_to_binary_map(map=cost_map_)
+        # exit(-1)
+        self.differences_map = cost_map_ - self.occ_map
+        self.differences_map = np.where(self.differences_map < 0.0, 0.0, self.differences_map)
+        self.differences_map = self.binary_dilation(self.differences_map)
+        # plt.imshow(self.differences_map)
+        # plt.show()
+        plt.savefig(self.differences_map_file)
+        self.calculate_number_of_circles_in_map()
+        self.show_map()
+
+    def calculate_number_of_circles_in_map(self):
+        filename = self.differences_map_file
+        # Loads an image
+        src      = cv.imread(cv.samples.findFile(filename), cv.IMREAD_COLOR)
+        # Check if image is loaded fine
+        if src is None:
+            print ('Error opening image!')
+            print ('Usage: hough_circle.py [image_name -- default ' + self.differences_map_file + '] \n')
+            return -1
+        gray = cv.cvtColor(src, cv.COLOR_BGR2GRAY)
+        gray = cv.medianBlur(gray, 5)
+        rows = gray.shape[0]
+        circles = cv.HoughCircles(gray, cv.HOUGH_GRADIENT, 1, rows / 8,
+                                  param1=30, param2=15,
+                                  # param1=100, param2=30,
+                                  minRadius=0, maxRadius=0)
+                                  # minRadius=1, maxRadius=30)
+        if circles is not None:
+            circles = np.uint16(np.around(circles))
+            for i in circles[0, :]:
+                center = (i[0], i[1])
+                # circle center
+                cv.circle(src, center, 1, (0, 100, 100), 3)
+                # circle outline
+                radius = i[2]
+                cv.circle(src, center, radius, (255, 0, 255), 3)
+            print("detected circles", len(circles))
+            # cv.imshow("detected circles", src)
+            cv.imshow("detected circles" + str(len(circles)), src)
+            cv.waitKey(0)
+        else:
+            print("detected 0 circles")
+
+    def show_map(self):
+        if not self.cost_map is None:
+            plt.imshow(self.differences_map)
+            # plt.imshow(self.cost_map)
+            plt.show()
+
+def inspection(ms):
+    print('start inspection')
+
+    occ_map = ms.map_arr
+    # cb = CleaningBlocks(occ_map)
+    # plt.imshow(occ_map)
+    # plt.show()
+
+    path = []
+    # path.append({"position": (260, 200), "angle": 0})
+    path.append({"position": (125, 150), "angle": 0})
+    # path.append({"position": (200, 200), "angle": 0})
+    move_robot_on_path(map_service=ms, path=path)
+
+    cmu = InspectionCostmapUpdater(occ_map)
+    rospy.spin()
+
+
 if __name__ == '__main__':
     rospy.init_node('get_map_example')
 
     ms      = MapService()
     occ_map = ms.map_arr
 
-    exec_mode = sys.argv[1]
-    exec_mode = 'cleaning'
+    # exec_mode = sys.argv[1]
+    # exec_mode = 'cleaning'                                     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
+    exec_mode = 'inspection'
     print('exec_mode:' + exec_mode)
     if exec_mode == 'cleaning':
         vacuum_cleaning(ms=ms)
     elif exec_mode == 'inspection':
-        inspection()
+        inspection(ms=ms)
     else:
         print("Code not found")
         raise NotImplementedError
