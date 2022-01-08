@@ -516,17 +516,21 @@ def vacuum_cleaning(ms):
 class InspectionCostmapUpdater:
     def __init__(self, occ_map):
         self.differences_map_file = 'differences_map.png'
-        self.occ_map              = self.binary_dilation(occ_map)
+        self.occ_map              = self.binary_dilation(map=occ_map, iterations1=0, iterations2=1)
         self.cost_map             = None
         self.differences_map      = None
         self.shape                = None
         rospy.Subscriber('/move_base/global_costmap/costmap'        , OccupancyGrid      , self.init_costmap_callback  )
         rospy.Subscriber('/move_base/global_costmap/costmap_updates', OccupancyGridUpdate, self.costmap_callback_update)
 
-    def binary_dilation(self, occ_map):
-        occ_map_ = self.map_to_binary_map(map=occ_map)
-        struct1  = ndimage.generate_binary_structure(2, 1)
-        occ_map_ = ndimage.binary_dilation(occ_map_, structure=struct1, iterations=1).astype(occ_map_.dtype)
+    def binary_dilation(self, map, iterations1, iterations2):
+        occ_map_ = self.map_to_binary_map(map=map)
+        if 0 < iterations1:
+            struct1 = ndimage.generate_binary_structure(2, 2)
+            occ_map_ = ndimage.binary_dilation(occ_map_, structure=struct1, iterations=iterations1).astype(occ_map_.dtype)
+        if 0 < iterations2:
+            struct2  = ndimage.generate_binary_structure(2, 1)
+            occ_map_ = ndimage.binary_dilation(occ_map_, structure=struct2, iterations=iterations2).astype(occ_map_.dtype)
         return occ_map_
 
     def map_to_binary_map(self, map):
@@ -558,8 +562,8 @@ class InspectionCostmapUpdater:
         # exit(-1)
         self.differences_map = cost_map_ - self.occ_map
         self.differences_map = np.where(self.differences_map < 0.0, 0.0, self.differences_map)
-        self.differences_map = self.binary_dilation(self.differences_map)
-        # plt.imshow(self.differences_map)
+        self.differences_map = self.binary_dilation(map=self.differences_map, iterations1=3, iterations2=2)
+        plt.imshow(self.differences_map)
         # plt.show()
         plt.savefig(self.differences_map_file)
         self.calculate_number_of_circles_in_map()
@@ -576,11 +580,13 @@ class InspectionCostmapUpdater:
             return -1
         gray = cv.cvtColor(src, cv.COLOR_BGR2GRAY)
         gray = cv.medianBlur(gray, 5)
+        # plt.imshow(gray)
+        # plt.show()
         rows = gray.shape[0]
-        circles = cv.HoughCircles(gray, cv.HOUGH_GRADIENT, 1, rows / 8,
-                                  param1=30, param2=15,
+        circles = cv.HoughCircles(gray, cv.HOUGH_GRADIENT, 1, rows / 16,#/ 8
+                                  param1=100, param2=9,
                                   # param1=100, param2=30,
-                                  minRadius=0, maxRadius=0)
+                                  minRadius=9, maxRadius=21)
                                   # minRadius=1, maxRadius=30)
         if circles is not None:
             circles = np.uint16(np.around(circles))
