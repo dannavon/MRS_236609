@@ -358,6 +358,8 @@ class Path_finder:
         self.margin_between_outter_and_inner_triangles = self.robot_width_with_error_gap
 
     def find(self, triangles):
+        triangles = self.sort_vertices_by_prev_center_to_closest_next_vertex(triangles)
+
         path = []
         for triangle in triangles:
             lines = []
@@ -416,6 +418,23 @@ class Path_finder:
                 add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=4, distance_decrease_multiplier=1)
 
         return final_borders, final_path
+
+    def sort_vertices_by_prev_center_to_closest_next_vertex(self, triangles):
+        result = []
+        result.append(triangles[0])
+        for i in range(1, len(triangles)):
+            prev_triangle        = triangles[i - 1]
+            current_triangle     = triangles[i    ]
+            prev_triangle_center = ((prev_triangle[0] + prev_triangle[1] + prev_triangle[2]) / 3.0)
+            min_distance         = np.linalg.norm(prev_triangle_center - current_triangle[0])
+            min_distance_index   = 0
+            for j in range(1, 3):
+                distance = np.linalg.norm(prev_triangle_center - current_triangle[j])
+                if distance < min_distance:
+                    min_distance       = distance
+                    min_distance_index = j
+            result.append((current_triangle[min_distance_index % 3], current_triangle[(min_distance_index + 1) % 3], current_triangle[(min_distance_index + 2) % 3]))
+        return result
 
     def add_collision_points_to_lines(self, lines, triangle_point_1, triangle_point_2, triangle_point_3):
         first = True
@@ -763,14 +782,13 @@ if __name__ == '__main__':
     rospy.init_node('get_map_example')
     ms = MapService()
 
-    # Triangle = namedtuple('Triangle', ['coordinates', 'center', 'area', 'edges'])
-    # WHAT IS THAT ? ^^^
+    Triangle = namedtuple('Triangle', ['coordinates', 'center', 'area', 'edges'])
 
     exec_mode = sys.argv[1]
 
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
-    # exec_mode = 'cleaning'
+    exec_mode = 'cleaning'
     # exec_mode = 'inspection'
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
