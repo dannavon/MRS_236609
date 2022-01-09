@@ -7,14 +7,14 @@ import sys
 import time
 import math
 import numpy as np
-import dynamic_reconfigure.client
+# import dynamic_reconfigure.client
 import cv2 as cv
 import matplotlib.pyplot as plt
 
 from scipy.spatial.transform import Rotation as R
-from scipy.misc import toimage
+# from scipy.misc import toimage
 from scipy import ndimage
-from tf.transformations import euler_from_quaternion, quaternion_from_euler
+# from tf.transformations import euler_from_quaternion, quaternion_from_euler
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from geometry_msgs.msg import PoseWithCovarianceStamped, Quaternion
 from nav_msgs.srv import GetMap
@@ -22,7 +22,6 @@ from nav_msgs.msg import OccupancyGrid, Odometry
 from map_msgs.msg import OccupancyGridUpdate
 from collections import namedtuple
 from Queue import PriorityQueue
-from scipy.spatial.transform import Rotation as R
 
 
 # Check if a point is inside a rectangle
@@ -349,10 +348,10 @@ class Graph:
 
 
 class Path_finder:
-    def __init__(self):
-        self.error_gap                                 = 0.1
-        self.robot_width                               = 8.0#3.0#0.105
-        self.divide_walk_every                         = (10.0 / 3.0)#(1.0 / 3.0)
+    def __init__(self, robot_width=8.0, error_gap=0.1, divide_walk_every=(10.0 / 3.0)):#robot_width=0.105
+        self.error_gap                                 = error_gap
+        self.robot_width                               = robot_width
+        self.divide_walk_every                         = divide_walk_every
         self.robot_width_with_error_gap                = self.robot_width * (1.0 + max(0.0, self.error_gap))
         self.distance_to_stop_before_next_triangle     = self.robot_width_with_error_gap
         self.margin_between_outter_and_inner_triangles = self.robot_width_with_error_gap
@@ -620,7 +619,7 @@ def plot_path(borders, path, plot, save_to_file):
             angle_radian    = path[i]["angle"]
             rotation_matrix = R.from_euler('z', angle_radian, degrees=False)
             rotated_vector  = rotation_matrix.apply(np.array((0.05, 0.0, 0.0)))
-            # plt.arrow(x=path[i]["position"][0], y=path[i]["position"][1], dx=rotated_vector[0], dy=rotated_vector[1], width=0.5)#.015)
+            plt.arrow(x=path[i]["position"][0], y=path[i]["position"][1], dx=rotated_vector[0], dy=rotated_vector[1], width=0.5)#.015)
         for i in range(len(borders)):
             plt.plot(np.array(borders[i][0]), np.array(borders[i][1]))
         plt.plot(np.array(x), np.array(y))
