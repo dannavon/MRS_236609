@@ -19,6 +19,7 @@ from scipy.spatial.transform import Rotation as R
 # from scipy.misc import toimage
 from scipy import ndimage
 # from tf.transformations import euler_from_quaternion, quaternion_from_euler
+import dynamic_reconfigure.client
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from geometry_msgs.msg import PoseWithCovarianceStamped, Quaternion
 from nav_msgs.srv import GetMap
@@ -397,7 +398,7 @@ class Graph:
 
 
 class Path_finder:
-    def __init__(self, robot_width=8.0, error_gap=0.1, divide_walk_every=(10.0 / 3.0)):#robot_width=0.105
+    def __init__(self, robot_width=5.0, error_gap=0.15, divide_walk_every=20.0):#(10.0 / 3.0)):#robot_width=0.105
         self.error_gap                                 = error_gap
         self.robot_width                               = robot_width
         self.divide_walk_every                         = divide_walk_every
@@ -511,7 +512,8 @@ class Path_finder:
                 if i == 1:
                     return
             if first:
-                self.margin_between_outter_and_inner_triangles = self.robot_width_with_error_gap / 2
+                self.margin_between_outter_and_inner_triangles = self.robot_width_with_error_gap
+                # self.margin_between_outter_and_inner_triangles = self.robot_width_with_error_gap / 2
                 first = False
             else:
                 self.margin_between_outter_and_inner_triangles = self.robot_width_with_error_gap
@@ -606,7 +608,6 @@ class Path_finder:
             # ((I - dirs_mat) @ points_mat).sum(axis=0),
             rcond=None
         )[0][:, 0]
-
 
 def array_to_quaternion(nparr):
     '''
@@ -852,6 +853,10 @@ if __name__ == '__main__':
 
 
     rospy.init_node('get_map_example')
+    rc_DWA_client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS/")
+    rc_DWA_client.update_configuration({"max_vel_x": np.inf})
+    rc_DWA_client.update_configuration({"max_vel_trans": np.inf})
+
     ms = MapService()
     # rc_DWA_client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS/")
     # rc_DWA_client.update_configuration({"max_vel_x": 2.5})
