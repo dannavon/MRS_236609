@@ -22,7 +22,7 @@ from nav_msgs.msg import OccupancyGrid, Odometry
 from map_msgs.msg import OccupancyGridUpdate
 from collections import namedtuple
 from Queue import PriorityQueue
-from scipy.spatial.transform import Rotation as R
+
 
 
 # Check if a point is inside a rectangle
@@ -43,7 +43,7 @@ def draw_point(img, p, color):
     cv.circle(img, tuple(p), 2, color, cv.FILLED, cv.LINE_AA)
 
 
-def distance(a,b):
+def distance(a, b):
     return np.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
 
 
@@ -83,21 +83,17 @@ class CleaningBlocks:
         initial_triangles = self.sub_div.getTriangleList()
 
         r = self.rect
-        filtered_triangles = []
         for t in initial_triangles:
 
             pt1 = (t[0], t[1])
             pt2 = (t[2], t[3])
             pt3 = (t[4], t[5])
-            mid1 = (np.uint32((t[1] + t[3]) / 2), np.uint32((t[0] + t[2]) / 2))
-            mid2 = (np.uint32((t[3] + t[5]) / 2), np.uint32((t[2] + t[4]) / 2))
-            mid3 = (np.uint32((t[1] + t[5]) / 2), np.uint32((t[0] + t[4]) / 2))
             if rect_contains(r, pt1) and rect_contains(r, pt2) and rect_contains(r, pt3):
-                center = (np.round((t[0] + t[2] + t[4]) / 3),np.round((t[1] + t[3] + t[5]) / 3))
+                center = (np.round((t[0] + t[2] + t[4]) / 3), np.round((t[1] + t[3] + t[5]) / 3))
                 center2 = (np.uint32(np.round((t[1] + t[3] + t[5]) / 3)), np.uint32(np.round((t[0] + t[2] + t[4]) / 3)))
 
                 if self.point_in_room(center2):
-                # if self.line_in_room(mid1) and self.line_in_room(mid2) and self.line_in_room(mid3):
+                    # if self.line_in_room(mid1) and self.line_in_room(mid2) and self.line_in_room(mid3):
                     mat = np.array([[t[0], t[1], 1], [t[2], t[3], 1], [t[4], t[5], 1]])
                     area = np.linalg.det(mat) / 2
 
@@ -135,7 +131,7 @@ class CleaningBlocks:
         cv.waitKey(0)
         # cv.imwrite('delaunay.jpg', img)
 
-    def point_in_room(self, mid_p_i): #Funny - tried to check lines
+    def point_in_room(self, mid_p_i):    # Funny - tried to check lines
         map = self.occ_map
         if map[mid_p_i] != -1:  # mid pixel
             return True
