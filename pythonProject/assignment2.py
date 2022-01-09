@@ -7,20 +7,23 @@ import sys
 import time
 import math
 import numpy as np
+import dynamic_reconfigure.client
+import cv2 as cv
+import matplotlib.pyplot as plt
+
 from scipy.spatial.transform import Rotation as R
 from scipy.misc import toimage
 from scipy import ndimage
-import cv2 as cv
-
-import matplotlib.pyplot as plt
-
 from tf.transformations import euler_from_quaternion, quaternion_from_euler
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from geometry_msgs.msg import PoseWithCovarianceStamped, Quaternion
 from nav_msgs.srv import GetMap
 from nav_msgs.msg import OccupancyGrid, Odometry
 from map_msgs.msg import OccupancyGridUpdate
-import dynamic_reconfigure.client
+from collections import namedtuple
+from Queue import PriorityQueue
+from scipy.spatial.transform import Rotation as R
+
 
 # Check if a point is inside a rectangle
 def rect_contains(rect, point):
@@ -37,17 +40,28 @@ def rect_contains(rect, point):
 
 # Draw a point
 def draw_point(img, p, color):
-    cv.circle(img, tuple(p[0]), 2, color, cv.FILLED, cv.LINE_AA)
+    cv.circle(img, tuple(p), 2, color, cv.FILLED, cv.LINE_AA)
+
+
+def distance(a,b):
+    return np.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
+
+
+def is_same_edge(e1, e2):
+    return (e1[0] == e2[0] and e1[1] == e2[1]) or (e1[0] == e2[1] and e1[1] == e2[0])
 
 
 class CleaningBlocks:
 
     def __init__(self, occ_map):
-        self.triangles = None
+        self.triangles = []
+        self.triangle_order = []
         self.occ_map = occ_map
         self.map_size = occ_map.shape
         self.rect = (0, 0, self.map_size[1], self.map_size[0])
+        self.graph = Graph()
 
+        # find corners
         ret, thresh = cv.threshold(occ_map, 90, 255, 0)
         thresh = np.uint8(thresh)
         self.map_rgb = cv.cvtColor(thresh, cv.COLOR_GRAY2BGR)
@@ -57,11 +71,12 @@ class CleaningBlocks:
         corners = cv.goodFeaturesToTrack(thresh, 25, 0.01, 10)
         self.corners = np.int0(corners)
 
+        # find triangles
         # Create an instance of Subdiv2D
         self.sub_div = cv.Subdiv2D(self.rect)
         # Insert points into sub_div
         self.sub_div.insert(corners)
-
+        # Filter triangles outside the polygon
         self.extract_triangles()
 
     def extract_triangles(self):
@@ -78,10 +93,21 @@ class CleaningBlocks:
             mid2 = (np.uint32((t[3] + t[5]) / 2), np.uint32((t[2] + t[4]) / 2))
             mid3 = (np.uint32((t[1] + t[5]) / 2), np.uint32((t[0] + t[4]) / 2))
             if rect_contains(r, pt1) and rect_contains(r, pt2) and rect_contains(r, pt3):
-                if self.line_in_room(mid1) and self.line_in_room(mid2) and self.line_in_room(mid3):
-                    filtered_triangles.append(t)
+                center = (np.round((t[0] + t[2] + t[4]) / 3),np.round((t[1] + t[3] + t[5]) / 3))
+                center2 = (np.uint32(np.round((t[1] + t[3] + t[5]) / 3)), np.uint32(np.round((t[0] + t[2] + t[4]) / 3)))
 
-        self.triangles = filtered_triangles
+                if self.point_in_room(center2):
+                # if self.line_in_room(mid1) and self.line_in_room(mid2) and self.line_in_room(mid3):
+                    mat = np.array([[t[0], t[1], 1], [t[2], t[3], 1], [t[4], t[5], 1]])
+                    area = np.linalg.det(mat) / 2
+
+                    tri_edges = [[pt1, pt2, distance(pt1, pt2)], [pt1, pt3, distance(pt1, pt3)],
+                                 [pt2, pt3, distance(pt2, pt3)]]
+                    # center_edges = [[pt1, center, distance(pt1, center)], [pt1, center, distance(pt1, center)],
+                    #                 [pt2, center, distance(pt2, center)]]
+                    self.triangles.append(Triangle(t, center, area, tri_edges))
+                    last_tri_ind = len(self.triangles)-1
+                    self.add_adjacent_tri_edge(last_tri_ind)
 
     def get_triangles(self):
         return self.triangles
@@ -91,9 +117,10 @@ class CleaningBlocks:
         img = self.map_rgb
         # Draw points
         for p in self.corners:
-            draw_point(img, p, (0, 0, 255))
+            draw_point(img, p[0], (0, 0, 255))
 
-        for t in self.triangles:
+        for triangle in self.triangles:
+            t = triangle.coordinates
             pt1 = (t[0], t[1])
             pt2 = (t[2], t[3])
             pt3 = (t[4], t[5])
@@ -108,44 +135,100 @@ class CleaningBlocks:
         cv.waitKey(0)
         # cv.imwrite('delaunay.jpg', img)
 
-    def line_in_room(self, mid_p_i):
-
+    def point_in_room(self, mid_p_i): #Funny - tried to check lines
         map = self.occ_map
-
         if map[mid_p_i] != -1:  # mid pixel
             return True
-
-        size = map.shape
-        if mid_p_i[0] > 0:
-            if map[(mid_p_i[0] - 1, mid_p_i[1])] != -1:  # left pixel
-                return True
-            if mid_p_i[1] > 0:  # left up pixel
-                if map[(mid_p_i[0] - 1, mid_p_i[1] - 1)] != -1:
-                    return True
-            if mid_p_i[1] < size[0] - 1:  # left down pixel
-                if map[(mid_p_i[0] - 1, mid_p_i[1] + 1)] != -1:
-                    return True
-
-        if mid_p_i[0] < size[1] - 1:
-            if map[(mid_p_i[0] + 1, mid_p_i[1])] != -1:  # right pixel
-                return True
-            if mid_p_i[1] > 0:  # left up pixel
-                if map[(mid_p_i[0] + 1, mid_p_i[1] - 1)] != -1:
-                    return True
-            if mid_p_i[1] < size[0] - 1:  # left down pixel
-                if map[(mid_p_i[0] + 1, mid_p_i[1] + 1)] != -1:
-                    return True
-
-        if mid_p_i[1] > 0 and \
-                map[(mid_p_i[0], mid_p_i[1] - 1)] != -1:  # up pixel
-            return True
-
-        if mid_p_i[1] < size[0] - 1 and \
-                map[(mid_p_i[0], mid_p_i[1] + 1)] != -1:  # down pixel
-            return True
-
         return False
 
+
+    def add_adjacent_tri_edge(self, last_tri_ind):
+        for i in range(last_tri_ind):
+            if self.is_neighbor(i, last_tri_ind):
+                a = self.triangles[i].center
+                b = self.triangles[last_tri_ind].center
+                self.graph.add_edge(i, last_tri_ind, distance(a, b))
+
+    def is_neighbor(self, v_i, u_i): #Funny
+        v_cor = self.triangles[v_i].coordinates
+        u_cor = self.triangles[u_i].coordinates
+        v_edges = self.triangles[v_i].edges
+        u_edges = self.triangles[u_i].edges
+        # indices = range(0, 6, 2)
+        # for i in indices:
+        #     for j in indices:
+        #         if v_cor[i] == u_cor[j]:
+        #             if v_cor[i+1] == u_cor[j+1]:
+        #                 return True
+        for e1 in v_edges:
+            for e2 in u_edges:
+                if is_same_edge(e1, e2):
+                    return True
+        return False
+
+    def locate_initial_pose(self, first_pose):
+        min_dist = 1000
+        ind = 0
+        x = first_pose[0]
+        y = first_pose[1]
+        for (i, triangle) in enumerate(self.triangles):
+            c = triangle.center
+            dist = distance(c, first_pose)
+            if dist < min_dist:
+                min_dist = dist
+                ind = i
+        return ind
+
+    def draw_triangle_order(self):
+        img = self.map_rgb
+        triangle_order=self.triangle_order
+        for (i, tri) in enumerate(self.triangles):
+            c1 = tri.center
+            c1 = tuple(np.uint32((round(c1[0]), round(c1[1]))))
+
+            if i < len(triangle_order)-1:
+                c2 = self.triangles[i+1].center
+                c2 = tuple(np.uint32((round(c2[0]), round(c2[1]))))
+                cv.line(img, c1, c2, (255, 0, i * 7), 1, cv.LINE_AA, 0)
+
+            cv.circle(img, c1, 2, (255, 0, i * 7), cv.FILLED, cv.LINE_AA)
+
+    def sort(self, first_pose):
+
+        starting_point_ind = self.locate_initial_pose(first_pose)
+        dist_mat = []
+        dict_vector = []
+        for i in range(len(self.triangles)):
+            dist_vector = self.graph.dijkstra(i)
+            dist_mat.append(dist_vector.values())
+            dict_vector.append(dist_vector)
+            # print(dist_vector)
+
+        triangle_order = [starting_point_ind]
+        curr = starting_point_ind
+        while len(dict_vector) is not len(triangle_order):
+            min_d = np.inf
+            next = curr
+            for key, dist in dict_vector[curr].items():
+                if key is not curr and dist < min_d:
+                    min_d = dist
+                    next = key
+            triangle_order.append(next)
+            for key in dict_vector[curr].keys():
+                if key is not curr:
+                    dict_vector[key].pop(curr)
+            curr = next
+        # print(dist_mat)
+        # print(triangle_order)
+        self.triangle_order = triangle_order
+        sorted_triangles = [None] * len(self.triangle_order)
+        j = 0
+        for i in self.triangle_order:
+            sorted_triangles[j] = self.triangles[i]
+            j += 1
+
+        self.triangles = sorted_triangles
+        return self.triangles
 
 class CostMapUpdater:
 
@@ -203,14 +286,67 @@ class MapService(object):
         return indices * self.resolution + self.map_org
 
     def init_pose(self, msg):
-        self.initial_pose = self.position_to_map(pos=np.array([msg.pose.pose.position.x, msg.pose.pose.position.y]))
-        # print("initial pose is")
-        # print("X=" + str(self.initial_pose[0]))
-        # print("y=" + str(self.initial_pose[1]))
+        self.initial_pose = msg.pose.pose
+        print("initial pose is")
+        print("X=" + str(self.initial_pose.position.x))
+        print("y=" + str(self.initial_pose.position.y))
 
-# For anyone who wants to change parameters of move_base in python, here is an example:
-# rc_DWA_client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS/")
-# rc_DWA_client.update_configuration({"max_vel_x": "np.inf"})
+    def get_first_pose(self):
+        # Waits for YOU to set the initial_pose
+        i = 0
+        while ms.initial_pose is None:
+            if i % 5 == 0:
+                print("Waiting for initial_pose. i =", i)
+            i += 1
+            time.sleep(1.0)
+        # print("initial_pose:", ms.initial_pose)
+
+        pos = np.array([self.initial_pose.position.x, self.initial_pose.position.y])
+        return self.position_to_map(pos)
+
+# Based on https://stackabuse.com/dijkstras-algorithm-in-python/
+class Graph:
+    def __init__(self):
+        self.edges = {}
+        self.visited = []
+
+    def add_edges(self, edges):
+        for e in edges:
+            self.add_edge(e[0], e[1], e[2])
+
+    def add_edge(self, u, v, weight):
+        if u in self.edges:
+            self.edges[u].append((v, weight))
+        else:
+            self.edges[u] = [(v, weight)]
+
+        if v in self.edges:
+            self.edges[v].append((u, weight))
+        else:
+            self.edges[v] = [(u, weight)]
+
+    def dijkstra(self, start_vertex):
+        num_vertices = len(self.edges)
+        D = {v: float('inf') for v in range(num_vertices)}
+        D[start_vertex] = 0
+
+        pq = PriorityQueue()
+        pq.put((0, start_vertex))
+
+        while not pq.empty():
+            (dist, current_vertex) = pq.get()
+            self.visited.append(current_vertex)
+
+            for neighbor, dist in self.edges[current_vertex]:
+                if neighbor not in self.visited:
+                    old_cost = D[neighbor]
+                    new_cost = D[current_vertex] + dist
+                    if new_cost < old_cost:
+                        pq.put((new_cost, neighbor))
+                        D[neighbor] = new_cost
+        self.visited = []
+        return D
+
 
 class Path_finder:
     def __init__(self):
@@ -436,34 +572,37 @@ def movebase_client(map_service, path):
 
     return client.get_result()
 
-def plot_path(borders, path):
-    x = []
-    y = []
-    for i in range(len(path) - 1):
-        x.append(path[i    ]["position"][0])
-        y.append(path[i    ]["position"][1])
-        x.append(path[i + 1]["position"][0])
-        y.append(path[i + 1]["position"][1])
-        angle_radian    = path[i]["angle"]
-        rotation_matrix = R.from_euler('z', angle_radian, degrees=False)
-        rotated_vector  = rotation_matrix.apply(np.array((0.05, 0.0, 0.0)))
-        # plt.arrow(x=path[i]["position"][0], y=path[i]["position"][1], dx=rotated_vector[0], dy=rotated_vector[1], width=0.5)#.015)
-    for i in range(len(borders)):
-        plt.plot(np.array(borders[i][0]), np.array(borders[i][1]))
-    plt.plot(np.array(x), np.array(y))
-    plt.annotate(
-        'Start', xy=(x[0], y[0]), xytext=(x[0], y[0] - 0.5),
-        horizontalalignment="center",
-        arrowprops=dict(arrowstyle='->', lw=1)
-    )
-    plt.annotate(
-        'End', xy=(x[-1], y[-1]), xytext=(x[-1], y[-1] + 0.75),
-        horizontalalignment="center",
-        arrowprops=dict(arrowstyle='->', lw=1)
-    )
-    plt.axis('scaled')
-    plt.savefig("path.png")
-    plt.show()
+def plot_path(borders, path, plot, save_to_file):
+    if plot or save_to_file:
+        x = []
+        y = []
+        for i in range(len(path) - 1):
+            x.append(path[i    ]["position"][0])
+            y.append(path[i    ]["position"][1])
+            x.append(path[i + 1]["position"][0])
+            y.append(path[i + 1]["position"][1])
+            angle_radian    = path[i]["angle"]
+            rotation_matrix = R.from_euler('z', angle_radian, degrees=False)
+            rotated_vector  = rotation_matrix.apply(np.array((0.05, 0.0, 0.0)))
+            # plt.arrow(x=path[i]["position"][0], y=path[i]["position"][1], dx=rotated_vector[0], dy=rotated_vector[1], width=0.5)#.015)
+        for i in range(len(borders)):
+            plt.plot(np.array(borders[i][0]), np.array(borders[i][1]))
+        plt.plot(np.array(x), np.array(y))
+        plt.annotate(
+            'Start', xy=(x[0], y[0]), xytext=(x[0], y[0] - 0.5),
+            horizontalalignment="center",
+            arrowprops=dict(arrowstyle='->', lw=1)
+        )
+        plt.annotate(
+            'End', xy=(x[-1], y[-1]), xytext=(x[-1], y[-1] + 0.75),
+            horizontalalignment="center",
+            arrowprops=dict(arrowstyle='->', lw=1)
+        )
+        plt.axis('scaled')
+        if save_to_file:
+            plt.savefig("path.png")
+        if plot:
+            plt.show()
 
 def move_robot_on_path(map_service, path):
     try:
@@ -478,40 +617,32 @@ def move_robot_on_path(map_service, path):
 def vacuum_cleaning(ms):
     print('start vacuum_cleaning')
 
-    occ_map       = ms.map_arr
-    cb            = CleaningBlocks(occ_map)
-    triangle_list = cb.get_triangles()
-    # Draw delaunay triangles
-    # cb.draw_triangles((0, 255, 0))
+    cb            = CleaningBlocks(ms.map_arr)
+    first_pose    = ms.get_first_pose()
+    triangle_list = cb.sort(first_pose)
 
-    triangles = []
-    for t in triangle_list:
+    # Draw delaunay triangles
+    cb.draw_triangle_order()
+    # cb.draw_triangles((0, 255, 0))
+    triangles = []  # Tom's format
+    for triangle in triangle_list:
+        t = triangle.coordinates
         triangles.append((np.array((t[0], t[1], 0)), np.array((t[4], t[5], 0)), np.array((t[2], t[3], 0))))
         # print(triangles[-1])
 
     # Path planning
-    path_finder = Path_finder()
+    path_finder   = Path_finder()
     borders, path = path_finder.find(triangles)
     print("Done creating the path. Length:", len(path))
 
-    # Waits for YOU to set the initial_pose
-    i = 0
-    while ms.initial_pose is None:
-        if i % 5 == 0:
-            print("Waiting for initial_pose. i =", i)
-        i += 1
-        time.sleep(1.0)
-    # print("initial_pose:", ms.initial_pose)
+    # Plots / Saves the path map
+    plot_path(borders=borders, path=path, plot=False, save_to_file=True)
 
     # Moves the robot according to the path
     move_robot_on_path(map_service=ms, path=path)
 
-    # Plots / Saves the path map
-    # plot_path(borders=borders, path=path)
-
 
 ### INSPECTION ###
-
 
 class InspectionCostmapUpdater:
     def __init__(self, occ_map):
@@ -630,13 +761,20 @@ def inspection(ms):
 
 if __name__ == '__main__':
     rospy.init_node('get_map_example')
+    ms = MapService()
 
-    ms      = MapService()
-    occ_map = ms.map_arr
+    # Triangle = namedtuple('Triangle', ['coordinates', 'center', 'area', 'edges'])
+    # WHAT IS THAT ? ^^^
 
-    # exec_mode = sys.argv[1]
-    # exec_mode = 'cleaning'                                     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
-    exec_mode = 'inspection'
+    exec_mode = sys.argv[1]
+
+    # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
+    # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
+    # exec_mode = 'cleaning'
+    # exec_mode = 'inspection'
+    # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
+    # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
+
     print('exec_mode:' + exec_mode)
     if exec_mode == 'cleaning':
         vacuum_cleaning(ms=ms)
