@@ -7,14 +7,14 @@ import sys
 import time
 import math
 import numpy as np
-import dynamic_reconfigure.client
+# import dynamic_reconfigure.client
 import cv2 as cv
 import matplotlib.pyplot as plt
 
 from scipy.spatial.transform import Rotation as R
-from scipy.misc import toimage
+# from scipy.misc import toimage
 from scipy import ndimage
-from tf.transformations import euler_from_quaternion, quaternion_from_euler
+# from tf.transformations import euler_from_quaternion, quaternion_from_euler
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from geometry_msgs.msg import PoseWithCovarianceStamped, Quaternion
 from nav_msgs.srv import GetMap
@@ -43,7 +43,7 @@ def draw_point(img, p, color):
     cv.circle(img, tuple(p), 2, color, cv.FILLED, cv.LINE_AA)
 
 
-def distance(a, b):
+def distance(a,b):
     return np.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
 
 
@@ -133,6 +133,7 @@ class CleaningBlocks:
 
     def point_in_room(self, mid_p_i):    # Funny - tried to check lines
         map = self.occ_map
+
         if map[mid_p_i] != -1:  # mid pixel
             return True
         return False
@@ -344,16 +345,65 @@ class Graph:
         return D
 
 
-class Path_finder:
+        pos = np.array([self.initial_pose.position.x, self.initial_pose.position.y])
+        return self.position_to_map(pos)
+
+# Based on https://stackabuse.com/dijkstras-algorithm-in-python/
+class Graph:
     def __init__(self):
-        self.error_gap                                 = 0.1
-        self.robot_width                               = 8.0#3.0#0.105
-        self.divide_walk_every                         = (10.0 / 3.0)#(1.0 / 3.0)
+        self.edges = {}
+        self.visited = []
+
+    def add_edges(self, edges):
+        for e in edges:
+            self.add_edge(e[0], e[1], e[2])
+
+    def add_edge(self, u, v, weight):
+        if u in self.edges:
+            self.edges[u].append((v, weight))
+        else:
+            self.edges[u] = [(v, weight)]
+
+        if v in self.edges:
+            self.edges[v].append((u, weight))
+        else:
+            self.edges[v] = [(u, weight)]
+
+    def dijkstra(self, start_vertex):
+        num_vertices = len(self.edges)
+        D = {v: float('inf') for v in range(num_vertices)}
+        D[start_vertex] = 0
+
+        pq = PriorityQueue()
+        pq.put((0, start_vertex))
+
+        while not pq.empty():
+            (dist, current_vertex) = pq.get()
+            self.visited.append(current_vertex)
+
+            for neighbor, dist in self.edges[current_vertex]:
+                if neighbor not in self.visited:
+                    old_cost = D[neighbor]
+                    new_cost = D[current_vertex] + dist
+                    if new_cost < old_cost:
+                        pq.put((new_cost, neighbor))
+                        D[neighbor] = new_cost
+        self.visited = []
+        return D
+
+
+class Path_finder:
+    def __init__(self, robot_width=8.0, error_gap=0.1, divide_walk_every=(10.0 / 3.0)):#robot_width=0.105
+        self.error_gap                                 = error_gap
+        self.robot_width                               = robot_width
+        self.divide_walk_every                         = divide_walk_every
         self.robot_width_with_error_gap                = self.robot_width * (1.0 + max(0.0, self.error_gap))
         self.distance_to_stop_before_next_triangle     = self.robot_width_with_error_gap
         self.margin_between_outter_and_inner_triangles = self.robot_width_with_error_gap
 
     def find(self, triangles):
+        triangles = self.sort_vertices_by_prev_center_to_closest_next_vertex(triangles)
+
         path = []
         for triangle in triangles:
             lines = []
@@ -403,20 +453,59 @@ class Path_finder:
                 new_direction_vector = np.array((current_path_triangle[0][start_index], current_path_triangle[1][start_index], 0)) + direction_vector_norm * direction_vector_new_len
                 final_path.append({"position": (new_direction_vector[0], new_direction_vector[1]), "angle": yaw_angle})
 
-            for j in range(1, len(current_path_triangles)):
-                current_path_triangle = current_path_triangles[j]
-                yaw_angle             = math.atan2(current_path_triangle[1][1] - current_path_triangle[1][0], current_path_triangle[0][1] - current_path_triangle[0][0])
-                final_path.append({"position": (current_path_triangle[0][0], current_path_triangle[1][0]), "angle": yaw_angle})
-                add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=0, distance_decrease_multiplier=0)
-                add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=2, distance_decrease_multiplier=0)
-                add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=4, distance_decrease_multiplier=1)
+            if len(current_path_triangles) == 1:
+                current_path_triangle = current_path_triangles[0]
+                center_x              = (current_path_triangle[0][0] + current_path_triangle[0][2] + current_path_triangle[0][4]) / 3.0
+                center_y              = (current_path_triangle[1][0] + current_path_triangle[1][2] + current_path_triangle[1][4]) / 3.0
+                final_path.append({"position": (center_x, center_y), "angle": final_path[-1]["angle"]})
+            else:
+                for j in range(1, len(current_path_triangles)):
+                    current_path_triangle = current_path_triangles[j]
+                    yaw_angle             = math.atan2(current_path_triangle[1][1] - current_path_triangle[1][0], current_path_triangle[0][1] - current_path_triangle[0][0])
+                    final_path.append({"position": (current_path_triangle[0][0], current_path_triangle[1][0]), "angle": yaw_angle})
+                    add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=0, distance_decrease_multiplier=0)
+                    add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=2, distance_decrease_multiplier=0)
+                    add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=4, distance_decrease_multiplier=1)
 
         return final_borders, final_path
 
-    def add_collision_points_to_lines(self, lines, triangle_point_1, triangle_point_2, triangle_point_3):
+    def sort_vertices_by_prev_center_to_closest_next_vertex(self, triangles):
+        result = []
+        result.append(triangles[0])
+        for i in range(1, len(triangles)):
+            prev_triangle        = triangles[i - 1]
+            current_triangle     = triangles[i    ]
+            prev_triangle_center = ((prev_triangle[0] + prev_triangle[1] + prev_triangle[2]) / 3.0)
+            current_lines        = []
+            self.add_collision_points_to_lines(current_lines, current_triangle[0], current_triangle[1], current_triangle[2], only_one_iteration=True)
+            if 3 < len(current_lines):
+                min_distance       = np.linalg.norm(prev_triangle_center - np.array(current_lines[3][0]))
+                min_distance_index = 0
+                for j in range(1, 3):
+                    distance = np.linalg.norm(prev_triangle_center - np.array(current_lines[3 + j][0]))
+                    if distance < min_distance:
+                        min_distance       = distance
+                        min_distance_index = j
+                result.append((current_triangle[min_distance_index % 3], current_triangle[(min_distance_index + 1) % 3], current_triangle[(min_distance_index + 2) % 3]))
+            else:
+                min_distance       = np.linalg.norm(prev_triangle_center - current_triangle[0])
+                min_distance_index = 0
+                for j in range(1, 3):
+                    distance = np.linalg.norm(prev_triangle_center - current_triangle[j])
+                    if distance < min_distance:
+                        min_distance       = distance
+                        min_distance_index = j
+                result.append((current_triangle[min_distance_index % 3], current_triangle[(min_distance_index + 1) % 3], current_triangle[(min_distance_index + 2) % 3]))
+        return result
+
+    def add_collision_points_to_lines(self, lines, triangle_point_1, triangle_point_2, triangle_point_3, only_one_iteration=False):
+        i     = 0
         first = True
         while True:
             self.add_triangle_to_list(lines, triangle_point_1, triangle_point_2, triangle_point_3)
+            if only_one_iteration:
+                if i == 1:
+                    return
             if first:
                 self.margin_between_outter_and_inner_triangles = self.robot_width_with_error_gap / 2
                 first = False
@@ -432,16 +521,17 @@ class Path_finder:
             if inner_triangle_point_3 is None:
                 return
             triangle_point_1, triangle_point_2, triangle_point_3 = inner_triangle_point_1, inner_triangle_point_2, inner_triangle_point_3
+            i += 1
 
     def add_triangle_to_list(self, lines, triangle_point_1, triangle_point_2, triangle_point_3):
-        self.add_line_to_set(lines, ((triangle_point_1[0], triangle_point_1[1], triangle_point_1[2]),
-                                     (triangle_point_2[0], triangle_point_2[1], triangle_point_2[2])))
-        self.add_line_to_set(lines, ((triangle_point_2[0], triangle_point_2[1], triangle_point_2[2]),
-                                     (triangle_point_3[0], triangle_point_3[1], triangle_point_3[2])))
-        self.add_line_to_set(lines, ((triangle_point_3[0], triangle_point_3[1], triangle_point_3[2]),
-                                     (triangle_point_1[0], triangle_point_1[1], triangle_point_1[2])))
+        self.add_line_to_list(lines, ((triangle_point_1[0], triangle_point_1[1], triangle_point_1[2]),
+                                      (triangle_point_2[0], triangle_point_2[1], triangle_point_2[2])))
+        self.add_line_to_list(lines, ((triangle_point_2[0], triangle_point_2[1], triangle_point_2[2]),
+                                      (triangle_point_3[0], triangle_point_3[1], triangle_point_3[2])))
+        self.add_line_to_list(lines, ((triangle_point_3[0], triangle_point_3[1], triangle_point_3[2]),
+                                      (triangle_point_1[0], triangle_point_1[1], triangle_point_1[2])))
 
-    def add_line_to_set(self, lines, line_to_add):
+    def add_line_to_list(self, lines, line_to_add):
         if (line_to_add[1], line_to_add[0]) not in lines:
             lines.append(line_to_add)
 
@@ -568,34 +658,37 @@ def movebase_client(map_service, path):
 
     return client.get_result()
 
-def plot_path(borders, path):
-    x = []
-    y = []
-    for i in range(len(path) - 1):
-        x.append(path[i    ]["position"][0])
-        y.append(path[i    ]["position"][1])
-        x.append(path[i + 1]["position"][0])
-        y.append(path[i + 1]["position"][1])
-        angle_radian    = path[i]["angle"]
-        rotation_matrix = R.from_euler('z', angle_radian, degrees=False)
-        rotated_vector  = rotation_matrix.apply(np.array((0.05, 0.0, 0.0)))
-        # plt.arrow(x=path[i]["position"][0], y=path[i]["position"][1], dx=rotated_vector[0], dy=rotated_vector[1], width=0.5)#.015)
-    for i in range(len(borders)):
-        plt.plot(np.array(borders[i][0]), np.array(borders[i][1]))
-    plt.plot(np.array(x), np.array(y))
-    plt.annotate(
-        'Start', xy=(x[0], y[0]), xytext=(x[0], y[0] - 0.5),
-        horizontalalignment="center",
-        arrowprops=dict(arrowstyle='->', lw=1)
-    )
-    plt.annotate(
-        'End', xy=(x[-1], y[-1]), xytext=(x[-1], y[-1] + 0.75),
-        horizontalalignment="center",
-        arrowprops=dict(arrowstyle='->', lw=1)
-    )
-    plt.axis('scaled')
-    plt.savefig("path.png")
-    plt.show()
+def plot_path(borders, path, plot, save_to_file):
+    if plot or save_to_file:
+        x = []
+        y = []
+        for i in range(len(path) - 1):
+            x.append(path[i    ]["position"][0])
+            y.append(path[i    ]["position"][1])
+            x.append(path[i + 1]["position"][0])
+            y.append(path[i + 1]["position"][1])
+            angle_radian    = path[i]["angle"]
+            rotation_matrix = R.from_euler('z', angle_radian, degrees=False)
+            rotated_vector  = rotation_matrix.apply(np.array((0.05, 0.0, 0.0)))
+            plt.arrow(x=path[i]["position"][0], y=path[i]["position"][1], dx=rotated_vector[0], dy=rotated_vector[1], width=0.5)#.015)
+        for i in range(len(borders)):
+            plt.plot(np.array(borders[i][0]), np.array(borders[i][1]))
+        plt.plot(np.array(x), np.array(y))
+        plt.annotate(
+            'Start', xy=(x[0], y[0]), xytext=(x[0], y[0] - 0.5),
+            horizontalalignment="center",
+            arrowprops=dict(arrowstyle='->', lw=1)
+        )
+        plt.annotate(
+            'End', xy=(x[-1], y[-1]), xytext=(x[-1], y[-1] + 0.75),
+            horizontalalignment="center",
+            arrowprops=dict(arrowstyle='->', lw=1)
+        )
+        plt.axis('scaled')
+        if save_to_file:
+            plt.savefig("path.png")
+        if plot:
+            plt.show()
 
 def move_robot_on_path(map_service, path):
     try:
@@ -624,15 +717,15 @@ def vacuum_cleaning(ms):
         # print(triangles[-1])
 
     # Path planning
-    path_finder = Path_finder()
-    borders, path = path_finder.find(triangles)
+    path_finder   = Path_finder()
+    borders, path = path_finder.find(triangles=triangles)
     print("Done creating the path. Length:", len(path))
+
+    # Plots / Saves the path map
+    plot_path(borders=borders, path=path, plot=False, save_to_file=True)
 
     # Moves the robot according to the path
     move_robot_on_path(map_service=ms, path=path)
-
-    # Plots / Saves the path map
-    # plot_path(borders=borders, path=path)
 
 
 ### INSPECTION ###
@@ -755,10 +848,7 @@ def inspection(ms):
 if __name__ == '__main__':
     rospy.init_node('get_map_example')
     ms = MapService()
-
     Triangle = namedtuple('Triangle', ['coordinates', 'center', 'area', 'edges'])
-
-
 
     exec_mode = sys.argv[1]
 
