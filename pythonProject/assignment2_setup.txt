@@ -1,7 +1,8 @@
 cd ~/ws/
 source devel/setup.bash
 export TURTLEBOT3_MODEL=burger
-roslaunch MRS_236609 turtlebot3_closed_room.launch
+roslaunch MRS_236609 turtlebot3_closed_room.launch #
+roslaunch MRS_236609 turtlebot3_closed_room_with_2_spheres.launch
 ______________________________________________________________________
 
 cd ~/ws/

@@ -1,15 +1,19 @@
 #!/usr/bin/env python2.7
 
 import rospy
-import tf
 import actionlib
 import sys
 import time
 import math
 import numpy as np
-# import dynamic_reconfigure.client
+import dynamic_reconfigure.client
 import cv2 as cv
 import matplotlib.pyplot as plt
+import os
+os.environ["ROS_ROOT"] = "/opt/ros/melodic/share/ros"
+os.environ["ROS_PACKAGE_PATH"] = "/opt/ros/melodic/share"
+
+import tf
 
 from scipy.spatial.transform import Rotation as R
 # from scipy.misc import toimage
@@ -700,12 +704,11 @@ def move_robot_on_path(map_service, path):
     except rospy.ROSInterruptException:
         rospy.loginfo("Navigation Exception.")
 
-def vacuum_cleaning(ms):
-    print('start vacuum_cleaning')
 
-    cb = CleaningBlocks(ms.map_arr)
-    first_pose = ms.get_first_pose()
-    triangle_list = cb.sort(first_pose)
+def vacuum_cleaning(ms, cb):
+
+    print('start vacuum_cleaning')
+    triangle_list = cb.get_triangles()
 
     # Draw delaunay triangles
     cb.draw_triangle_order()
@@ -846,9 +849,16 @@ def inspection(ms):
 
 
 if __name__ == '__main__':
+
+
     rospy.init_node('get_map_example')
     ms = MapService()
+    # rc_DWA_client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS/")
+    # rc_DWA_client.update_configuration({"max_vel_x": 2.5})
     Triangle = namedtuple('Triangle', ['coordinates', 'center', 'area', 'edges'])
+    cb = CleaningBlocks(ms.map_arr)
+    first_pose = ms.get_first_pose()
+    cb.sort(first_pose)
 
     exec_mode = sys.argv[1]
 
@@ -861,7 +871,7 @@ if __name__ == '__main__':
 
     print('exec_mode:' + exec_mode)
     if exec_mode == 'cleaning':
-        vacuum_cleaning(ms=ms)
+        vacuum_cleaning(ms, cb)
     elif exec_mode == 'inspection':
         inspection(ms=ms)
     else:
