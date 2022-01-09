@@ -426,20 +426,36 @@ class Path_finder:
             prev_triangle        = triangles[i - 1]
             current_triangle     = triangles[i    ]
             prev_triangle_center = ((prev_triangle[0] + prev_triangle[1] + prev_triangle[2]) / 3.0)
-            min_distance         = np.linalg.norm(prev_triangle_center - current_triangle[0])
-            min_distance_index   = 0
-            for j in range(1, 3):
-                distance = np.linalg.norm(prev_triangle_center - current_triangle[j])
-                if distance < min_distance:
-                    min_distance       = distance
-                    min_distance_index = j
-            result.append((current_triangle[min_distance_index % 3], current_triangle[(min_distance_index + 1) % 3], current_triangle[(min_distance_index + 2) % 3]))
+            current_lines        = []
+            self.add_collision_points_to_lines(current_lines, current_triangle[0], current_triangle[1], current_triangle[2], only_one_iteration=True)
+            if 3 < len(current_lines):
+                min_distance       = np.linalg.norm(prev_triangle_center - np.array(current_lines[3][0]))
+                min_distance_index = 0
+                for j in range(1, 3):
+                    distance = np.linalg.norm(prev_triangle_center - np.array(current_lines[3 + j][0]))
+                    if distance < min_distance:
+                        min_distance       = distance
+                        min_distance_index = j
+                result.append((current_triangle[min_distance_index % 3], current_triangle[(min_distance_index + 1) % 3], current_triangle[(min_distance_index + 2) % 3]))
+            else:
+                min_distance       = np.linalg.norm(prev_triangle_center - current_triangle[0])
+                min_distance_index = 0
+                for j in range(1, 3):
+                    distance = np.linalg.norm(prev_triangle_center - current_triangle[j])
+                    if distance < min_distance:
+                        min_distance       = distance
+                        min_distance_index = j
+                result.append((current_triangle[min_distance_index % 3], current_triangle[(min_distance_index + 1) % 3], current_triangle[(min_distance_index + 2) % 3]))
         return result
 
-    def add_collision_points_to_lines(self, lines, triangle_point_1, triangle_point_2, triangle_point_3):
+    def add_collision_points_to_lines(self, lines, triangle_point_1, triangle_point_2, triangle_point_3, only_one_iteration=False):
+        i     = 0
         first = True
         while True:
             self.add_triangle_to_list(lines, triangle_point_1, triangle_point_2, triangle_point_3)
+            if only_one_iteration:
+                if i == 1:
+                    return
             if first:
                 self.margin_between_outter_and_inner_triangles = self.robot_width_with_error_gap / 2
                 first = False
@@ -455,16 +471,17 @@ class Path_finder:
             if inner_triangle_point_3 is None:
                 return
             triangle_point_1, triangle_point_2, triangle_point_3 = inner_triangle_point_1, inner_triangle_point_2, inner_triangle_point_3
+            i += 1
 
     def add_triangle_to_list(self, lines, triangle_point_1, triangle_point_2, triangle_point_3):
-        self.add_line_to_set(lines, ((triangle_point_1[0], triangle_point_1[1], triangle_point_1[2]),
-                                     (triangle_point_2[0], triangle_point_2[1], triangle_point_2[2])))
-        self.add_line_to_set(lines, ((triangle_point_2[0], triangle_point_2[1], triangle_point_2[2]),
-                                     (triangle_point_3[0], triangle_point_3[1], triangle_point_3[2])))
-        self.add_line_to_set(lines, ((triangle_point_3[0], triangle_point_3[1], triangle_point_3[2]),
-                                     (triangle_point_1[0], triangle_point_1[1], triangle_point_1[2])))
+        self.add_line_to_list(lines, ((triangle_point_1[0], triangle_point_1[1], triangle_point_1[2]),
+                                      (triangle_point_2[0], triangle_point_2[1], triangle_point_2[2])))
+        self.add_line_to_list(lines, ((triangle_point_2[0], triangle_point_2[1], triangle_point_2[2]),
+                                      (triangle_point_3[0], triangle_point_3[1], triangle_point_3[2])))
+        self.add_line_to_list(lines, ((triangle_point_3[0], triangle_point_3[1], triangle_point_3[2]),
+                                      (triangle_point_1[0], triangle_point_1[1], triangle_point_1[2])))
 
-    def add_line_to_set(self, lines, line_to_add):
+    def add_line_to_list(self, lines, line_to_add):
         if (line_to_add[1], line_to_add[0]) not in lines:
             lines.append(line_to_add)
 
