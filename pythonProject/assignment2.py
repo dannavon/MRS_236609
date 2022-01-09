@@ -366,8 +366,8 @@ class Path_finder:
             self.margin_between_outter_and_inner_triangles = self.robot_width_with_error_gap
             path.append(lines)
 
-        final_borders = []
-        final_path    = []
+        final_borders        = []
+        final_path           = []
         for i in range(len(path)):
             current_path           = path[i]
             current_path_triangles = []
@@ -408,13 +408,19 @@ class Path_finder:
                 new_direction_vector = np.array((current_path_triangle[0][start_index], current_path_triangle[1][start_index], 0)) + direction_vector_norm * direction_vector_new_len
                 final_path.append({"position": (new_direction_vector[0], new_direction_vector[1]), "angle": yaw_angle})
 
-            for j in range(1, len(current_path_triangles)):
-                current_path_triangle = current_path_triangles[j]
-                yaw_angle             = math.atan2(current_path_triangle[1][1] - current_path_triangle[1][0], current_path_triangle[0][1] - current_path_triangle[0][0])
-                final_path.append({"position": (current_path_triangle[0][0], current_path_triangle[1][0]), "angle": yaw_angle})
-                add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=0, distance_decrease_multiplier=0)
-                add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=2, distance_decrease_multiplier=0)
-                add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=4, distance_decrease_multiplier=1)
+            if len(current_path_triangles) == 1:
+                current_path_triangle = current_path_triangles[0]
+                center_x              = (current_path_triangle[0][0] + current_path_triangle[0][2] + current_path_triangle[0][4]) / 3.0
+                center_y              = (current_path_triangle[1][0] + current_path_triangle[1][2] + current_path_triangle[1][4]) / 3.0
+                final_path.append({"position": (center_x, center_y), "angle": final_path[-1]["angle"]})
+            else:
+                for j in range(1, len(current_path_triangles)):
+                    current_path_triangle = current_path_triangles[j]
+                    yaw_angle             = math.atan2(current_path_triangle[1][1] - current_path_triangle[1][0], current_path_triangle[0][1] - current_path_triangle[0][0])
+                    final_path.append({"position": (current_path_triangle[0][0], current_path_triangle[1][0]), "angle": yaw_angle})
+                    add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=0, distance_decrease_multiplier=0)
+                    add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=2, distance_decrease_multiplier=0)
+                    add_straight_walk(final_path=final_path, current_path_triangle=current_path_triangle, start_index=4, distance_decrease_multiplier=1)
 
         return final_borders, final_path
 
@@ -667,7 +673,7 @@ def vacuum_cleaning(ms):
 
     # Path planning
     path_finder   = Path_finder()
-    borders, path = path_finder.find(triangles)
+    borders, path = path_finder.find(triangles=triangles)
     print("Done creating the path. Length:", len(path))
 
     # Plots / Saves the path map
