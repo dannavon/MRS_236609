@@ -349,7 +349,7 @@ class Graph:
 
 
 class Path_finder:
-    def __init__(self, robot_width=5.0, error_gap=0.15, divide_walk_every=20.0):#(10.0 / 3.0)):#robot_width=0.105
+    def __init__(self, robot_width=0.105, error_gap=0.15, divide_walk_every=20.0):#(10.0 / 3.0)):#robot_width=0.105
         self.error_gap                                 = error_gap
         self.robot_width                               = robot_width
         self.divide_walk_every                         = divide_walk_every
@@ -815,7 +815,7 @@ if __name__ == '__main__':
 
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
-    exec_mode = 'cleaning'
+    # exec_mode = 'cleaning'
     # exec_mode = 'inspection'
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
