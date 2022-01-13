@@ -7,6 +7,8 @@ import sys
 import time
 import math
 import numpy as np
+import itertools
+import pickle
 # import dynamic_reconfigure.client
 import cv2 as cv
 import matplotlib.pyplot as plt
@@ -68,7 +70,8 @@ class CleaningBlocks:
         # map_img_th = thresh.copy()
         # im2, contours, hierarchy = cv.findContours(map_img_th, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
         # cv.drawContours(map_img_th, contours, -1, (255, 255, 255), 3)
-        corners = cv.goodFeaturesToTrack(thresh, 25, 0.01, 10)
+        # corners = cv.goodFeaturesToTrack(thresh, 25, 0.01, 10)
+        corners = cv.goodFeaturesToTrack(thresh, maxCorners=30, qualityLevel=0.16, minDistance=3, blockSize=6, useHarrisDetector=False)
         self.corners = np.int0(corners)
 
         # find triangles
@@ -85,7 +88,6 @@ class CleaningBlocks:
         r = self.rect
         filtered_triangles = []
         for t in initial_triangles:
-
             pt1 = (t[0], t[1])
             pt2 = (t[2], t[3])
             pt3 = (t[4], t[5])
@@ -194,7 +196,6 @@ class CleaningBlocks:
             cv.circle(img, c1, 2, (255, 0, i * 7), cv.FILLED, cv.LINE_AA)
 
     def sort(self, first_pose):
-
         starting_point_ind = self.locate_initial_pose(first_pose)
         dist_mat = []
         dict_vector = []
@@ -277,9 +278,6 @@ class MapService(object):
         plt.show()
 
     def position_to_map(self, pos):
-        # print("pos", pos)
-        # print("self.map_org", self.map_org)
-        # print("self.resolution", self.resolution)
         return (pos - self.map_org) // self.resolution
 
     def map_to_position(self, indices):
@@ -362,10 +360,10 @@ class Path_finder:
 
         path = []
         for triangle in triangles:
-            lines = []
-            self.add_collision_points_to_lines(lines, triangle[0], triangle[1], triangle[2])
+            current_inner_triangles = []
+            self.add_collision_points_to_lines(current_inner_triangles, triangle[0], triangle[1], triangle[2], only_one_iteration=False)
             self.margin_between_outter_and_inner_triangles = self.robot_width_with_error_gap
-            path.append(lines)
+            path.append(current_inner_triangles)
 
         final_borders        = []
         final_path           = []
@@ -454,6 +452,21 @@ class Path_finder:
                 result.append((current_triangle[min_distance_index % 3], current_triangle[(min_distance_index + 1) % 3], current_triangle[(min_distance_index + 2) % 3]))
         return result
 
+    def ptInTriang(self, p_test, p0, p1, p2):
+        dX = p_test[0] - p0[0]
+        dY = p_test[1] - p0[1]
+        dX20 = p2[0] - p0[0]
+        dY20 = p2[1] - p0[1]
+        dX10 = p1[0] - p0[0]
+        dY10 = p1[1] - p0[1]
+        s_p = (dY20 * dX) - (dX20 * dY)
+        t_p = (dX10 * dY) - (dY10 * dX)
+        D = (dX10 * dY20) - (dY10 * dX20)
+        if D > 0:
+            return ((s_p >= 0) and (t_p >= 0) and (s_p + t_p) <= D)
+        else:
+            return ((s_p <= 0) and (t_p <= 0) and (s_p + t_p) >= D)
+
     def add_collision_points_to_lines(self, lines, triangle_point_1, triangle_point_2, triangle_point_3, only_one_iteration=False):
         i     = 0
         first = True
@@ -469,13 +482,13 @@ class Path_finder:
             else:
                 self.margin_between_outter_and_inner_triangles = self.robot_width_with_error_gap
             inner_triangle_point_1 = self.find_inner_triangle_point(triangle_point_1, triangle_point_3, triangle_point_2)
-            if inner_triangle_point_1 is None:
+            if inner_triangle_point_1 is None or not self.ptInTriang(p_test=inner_triangle_point_1, p0=triangle_point_1, p1=triangle_point_3, p2=triangle_point_2):
                 return
             inner_triangle_point_2 = self.find_inner_triangle_point(triangle_point_2, triangle_point_1, triangle_point_3)
-            if inner_triangle_point_2 is None:
+            if inner_triangle_point_2 is None or not self.ptInTriang(p_test=inner_triangle_point_2, p0=triangle_point_2, p1=triangle_point_1, p2=triangle_point_3):
                 return
             inner_triangle_point_3 = self.find_inner_triangle_point(triangle_point_3, triangle_point_2, triangle_point_1)
-            if inner_triangle_point_3 is None:
+            if inner_triangle_point_3 is None or not self.ptInTriang(p_test=inner_triangle_point_3, p0=triangle_point_3, p1=triangle_point_2, p2=triangle_point_1):
                 return
             triangle_point_1, triangle_point_2, triangle_point_3 = inner_triangle_point_1, inner_triangle_point_2, inner_triangle_point_3
             i += 1
@@ -664,7 +677,7 @@ def vacuum_cleaning(ms):
     triangle_list = cb.sort(first_pose)
 
     # Draw delaunay triangles
-    cb.draw_triangle_order()
+    # cb.draw_triangle_order()
     # cb.draw_triangles((0, 255, 0))
     triangles = []  # Tom's format
     for triangle in triangle_list:
@@ -679,22 +692,24 @@ def vacuum_cleaning(ms):
 
     # Plots / Saves the path map
     plot_path(borders=borders, path=path, plot=False, save_to_file=True)
+    # plot_path(borders=borders, path=path, plot=True, save_to_file=True)
 
     # Moves the robot according to the path
-    move_robot_on_path(map_service=ms, path=path)
+    # move_robot_on_path(map_service=ms, path=path)
 
 
 ### INSPECTION ###
 
 class InspectionCostmapUpdater:
-    def __init__(self, occ_map):
+    # def __init__(self, occ_map):
+    def __init__(self):
         self.differences_map_file = 'differences_map.png'
-        self.occ_map              = self.binary_dilation(map=occ_map, iterations1=0, iterations2=1)
-        self.cost_map             = None
-        self.differences_map      = None
-        self.shape                = None
-        rospy.Subscriber('/move_base/global_costmap/costmap'        , OccupancyGrid      , self.init_costmap_callback  )
-        rospy.Subscriber('/move_base/global_costmap/costmap_updates', OccupancyGridUpdate, self.costmap_callback_update)
+        # self.occ_map              = self.binary_dilation(map=occ_map, iterations1=0, iterations2=1)
+        # self.cost_map             = None
+        # self.differences_map      = None
+        # self.shape                = None
+        # rospy.Subscriber('/move_base/global_costmap/costmap'        , OccupancyGrid      , self.init_costmap_callback  )
+        # rospy.Subscriber('/move_base/global_costmap/costmap_updates', OccupancyGridUpdate, self.costmap_callback_update)
 
     def binary_dilation(self, map, iterations1, iterations2):
         occ_map_ = self.map_to_binary_map(map=map)
@@ -716,89 +731,89 @@ class InspectionCostmapUpdater:
                     map_[i][j] = 0.0
         return map_
 
-    def init_costmap_callback(self, msg):
-        self.shape    = msg.info.height, msg.info.width
-        self.cost_map = np.array(msg.data).reshape(self.shape)
-
-    def costmap_callback_update(self, msg):
-        shape = msg.height, msg.width
-        data  = np.array(msg.data).reshape(shape)
-        self.cost_map[msg.y:msg.y + shape[0], msg.x: msg.x + shape[1]] = data
-        # plt.imshow(self.occ_map)
-        # plt.show()
-        # plt.imshow(self.cost_map)
-        # plt.show()
-        cost_map_ = np.where(self.cost_map < 90, 0, self.cost_map)
-        # plt.imshow(self.cost_map)
-        # plt.show()
-        cost_map_ = self.map_to_binary_map(map=cost_map_)
-        # exit(-1)
-        self.differences_map = cost_map_ - self.occ_map
-        self.differences_map = np.where(self.differences_map < 0.0, 0.0, self.differences_map)
-        self.differences_map = self.binary_dilation(map=self.differences_map, iterations1=3, iterations2=2)
-        plt.imshow(self.differences_map)
-        # plt.show()
-        plt.savefig(self.differences_map_file)
-        self.calculate_number_of_circles_in_map()
-        self.show_map()
-
-    def calculate_number_of_circles_in_map(self):
-        filename = self.differences_map_file
-        # Loads an image
-        src      = cv.imread(cv.samples.findFile(filename), cv.IMREAD_COLOR)
-        # Check if image is loaded fine
-        if src is None:
-            print ('Error opening image!')
-            print ('Usage: hough_circle.py [image_name -- default ' + self.differences_map_file + '] \n')
-            return -1
-        gray = cv.cvtColor(src, cv.COLOR_BGR2GRAY)
-        gray = cv.medianBlur(gray, 5)
-        # plt.imshow(gray)
-        # plt.show()
-        rows = gray.shape[0]
-        circles = cv.HoughCircles(gray, cv.HOUGH_GRADIENT, 1, rows / 16,#/ 8
-                                  param1=100, param2=9,
-                                  # param1=100, param2=30,
-                                  minRadius=9, maxRadius=21)
-                                  # minRadius=1, maxRadius=30)
-        if circles is not None:
-            circles = np.uint16(np.around(circles))
-            for i in circles[0, :]:
-                center = (i[0], i[1])
-                # circle center
-                cv.circle(src, center, 1, (0, 100, 100), 3)
-                # circle outline
-                radius = i[2]
-                cv.circle(src, center, radius, (255, 0, 255), 3)
-            print("detected circles", len(circles))
-            # cv.imshow("detected circles", src)
-            cv.imshow("detected circles" + str(len(circles)), src)
-            cv.waitKey(0)
-        else:
-            print("detected 0 circles")
-
-    def show_map(self):
-        if not self.cost_map is None:
-            plt.imshow(self.differences_map)
-            # plt.imshow(self.cost_map)
-            plt.show()
-
-def inspection(ms):
-    print('start inspection')
-
-    occ_map = ms.map_arr
-    # cb = CleaningBlocks(occ_map)
-    # plt.imshow(occ_map)
-    # plt.show()
-
-    path = []
-    # path.append({"position": (260, 200), "angle": 0})
-    path.append({"position": (125, 150), "angle": 0})
-    # path.append({"position": (200, 200), "angle": 0})
-    move_robot_on_path(map_service=ms, path=path)
-
-    cmu = InspectionCostmapUpdater(occ_map)
-    rospy.spin()
+#     def init_costmap_callback(self, msg):
+#         self.shape    = msg.info.height, msg.info.width
+#         self.cost_map = np.array(msg.data).reshape(self.shape)
+#
+#     def costmap_callback_update(self, msg):
+#         shape = msg.height, msg.width
+#         data  = np.array(msg.data).reshape(shape)
+#         self.cost_map[msg.y:msg.y + shape[0], msg.x: msg.x + shape[1]] = data
+#         # plt.imshow(self.occ_map)
+#         # plt.show()
+#         # plt.imshow(self.cost_map)
+#         # plt.show()
+#         cost_map_ = np.where(self.cost_map < 90, 0, self.cost_map)
+#         # plt.imshow(self.cost_map)
+#         # plt.show()
+#         cost_map_ = self.map_to_binary_map(map=cost_map_)
+#         # exit(-1)
+#         self.differences_map = cost_map_ - self.occ_map
+#         self.differences_map = np.where(self.differences_map < 0.0, 0.0, self.differences_map)
+#         self.differences_map = self.binary_dilation(map=self.differences_map, iterations1=3, iterations2=2)
+#         plt.imshow(self.differences_map)
+#         # plt.show()
+#         plt.savefig(self.differences_map_file)
+#         self.calculate_number_of_circles_in_map()
+#         self.show_map()
+#
+#     def calculate_number_of_circles_in_map(self):
+#         filename = self.differences_map_file
+#         # Loads an image
+#         src      = cv.imread(cv.samples.findFile(filename), cv.IMREAD_COLOR)
+#         # Check if image is loaded fine
+#         if src is None:
+#             print ('Error opening image!')
+#             print ('Usage: hough_circle.py [image_name -- default ' + self.differences_map_file + '] \n')
+#             return -1
+#         gray = cv.cvtColor(src, cv.COLOR_BGR2GRAY)
+#         gray = cv.medianBlur(gray, 5)
+#         # plt.imshow(gray)
+#         # plt.show()
+#         rows = gray.shape[0]
+#         circles = cv.HoughCircles(gray, cv.HOUGH_GRADIENT, 1, rows / 16,#/ 8
+#                                   param1=100, param2=9,
+#                                   # param1=100, param2=30,
+#                                   minRadius=9, maxRadius=21)
+#                                   # minRadius=1, maxRadius=30)
+#         if circles is not None:
+#             circles = np.uint16(np.around(circles))
+#             for i in circles[0, :]:
+#                 center = (i[0], i[1])
+#                 # circle center
+#                 cv.circle(src, center, 1, (0, 100, 100), 3)
+#                 # circle outline
+#                 radius = i[2]
+#                 cv.circle(src, center, radius, (255, 0, 255), 3)
+#             print("detected circles", len(circles))
+#             # cv.imshow("detected circles", src)
+#             cv.imshow("detected circles" + str(len(circles)), src)
+#             cv.waitKey(0)
+#         else:
+#             print("detected 0 circles")
+#
+#     def show_map(self):
+#         if not self.cost_map is None:
+#             plt.imshow(self.differences_map)
+#             # plt.imshow(self.cost_map)
+#             plt.show()
+#
+# def inspection(ms):
+#     print('start inspection')
+#
+#     occ_map = ms.map_arr
+#     # cb = CleaningBlocks(occ_map)
+#     # plt.imshow(occ_map)
+#     # plt.show()
+#
+#     path = []
+#     # path.append({"position": (260, 200), "angle": 0})
+#     path.append({"position": (125, 150), "angle": 0})
+#     # path.append({"position": (200, 200), "angle": 0})
+#     move_robot_on_path(map_service=ms, path=path)
+#
+#     cmu = InspectionCostmapUpdater(occ_map)
+#     rospy.spin()
 
 
 if __name__ == '__main__':
@@ -811,7 +826,7 @@ if __name__ == '__main__':
 
     Triangle = namedtuple('Triangle', ['coordinates', 'center', 'area', 'edges'])
 
-    exec_mode = sys.argv[1]
+    # exec_mode = sys.argv[1]
 
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
@@ -823,10 +838,75 @@ if __name__ == '__main__':
     print('exec_mode:' + exec_mode)
     if exec_mode == 'cleaning':
         vacuum_cleaning(ms=ms)
-    elif exec_mode == 'inspection':
-        inspection(ms=ms)
+    # elif exec_mode == 'inspection':
+    #     inspection(ms=ms)
     else:
         print("Code not found")
         raise NotImplementedError
 
 
+
+
+    ##### Gridsearch for the corners detection algorithm's parameters
+
+    # ms_boolean = np.zeros(ms.map_arr.shape)
+    # result = np.zeros(ms.map_arr.shape)
+    #
+    # for i in range(ms.map_arr.shape[0]):
+    #     for j in range(ms.map_arr.shape[1]):
+    #         if ms.map_arr[i][j] == 100.0:
+    #             ms_boolean[i][j] = 1.0
+    #
+    # # inspectionCostmapUpdater = InspectionCostmapUpdater()
+    # # ms_boolean = inspectionCostmapUpdater.binary_dilation(map=ms_boolean, iterations1=0, iterations2=5)
+    #
+    # im = np.array(ms_boolean * 255, dtype=np.uint8)
+    # ms_boolean = cv.adaptiveThreshold(im, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 3, 0)
+    #
+    # good_parameters = []
+    #
+    # maxCornerss   = [30]
+    # qualityLevels = [(0.01 * (x + 1)) for x in range(10, 20)]# range(0, 40)]
+    # minDistances  = [x for x in range(2, 25)]
+    # blockSizes    = [x for x in range(2, 10)]
+    #
+    # all_combintations = list(itertools.product(*[maxCornerss, qualityLevels, minDistances, blockSizes]))
+    #
+    # k = 0.0
+    # for i, combintation in enumerate(all_combintations):
+    #     maxCorners   = combintation[0]
+    #     qualityLevel = combintation[1]
+    #     minDistance  = combintation[2]
+    #     blockSize    = combintation[3]
+    #
+    #     corners = cv.goodFeaturesToTrack(ms_boolean, maxCorners=maxCorners, qualityLevel=qualityLevel, minDistance=minDistance, blockSize=blockSize, useHarrisDetector=False)
+    #
+    #     corners = np.int0(corners)
+    #     if len(corners) == 14:
+    #         good_parameters.append((maxCorners, qualityLevel, minDistance, blockSize))
+    #     k += 1
+    #     print("Done", (k / len(all_combintations)))
+    #
+    # print("len(good_parameters)", len(good_parameters))
+    #
+    # with open('good_parameters.pkl', 'wb') as outp:
+    #     pickle.dump(good_parameters, outp, pickle.HIGHEST_PROTOCOL)
+    #
+    # with open('good_parameters.pkl', 'rb') as inp:
+    #     good_parameters = pickle.load(inp)
+    #
+    # for i in range(len(good_parameters)):
+    #     current_good_parameters = good_parameters[i]
+    #     result = np.zeros(ms.map_arr.shape)
+    #
+    #     corners = cv.goodFeaturesToTrack(ms_boolean, maxCorners=current_good_parameters[0], qualityLevel=current_good_parameters[1], minDistance=current_good_parameters[2], blockSize=current_good_parameters[3], useHarrisDetector=False)
+    #     corners = np.int0(corners)
+    #     for i in corners:
+    #         x, y = i.ravel()
+    #         cv.circle(result, (x, y), 3, 255, -1)
+    #
+    #     plt.imshow(result)
+    #     plt.title('Parameters: ' + str(current_good_parameters[0]) + ", " + str(current_good_parameters[1]) + ", " + str(current_good_parameters[2]) + ", " + str(current_good_parameters[3]))
+    #     plt.show()
+    #
+    # # ms.show_map()
