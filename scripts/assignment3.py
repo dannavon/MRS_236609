@@ -472,8 +472,7 @@ def vacuum_cleaning(agent_id, agent_max_vel):
     print('cleaning (%d,%d)' % (x, y))
     result = multi_move_base.move(agent_id, x, y)
 
-
-def inspection(agent_1_max_vel, agent_2_max_vel):
+def inspection(agent_id, agent_max_vel):
     print('start inspection')
 
 
@@ -499,17 +498,17 @@ if __name__ == '__main__':
     exec_mode = sys.argv[1]
     print('exec_mode:' + exec_mode)
 
-    agent_max_vel = 0.22;
+    agent_max_vel = 0.22
     if exec_mode == 'cleaning':
-        agent_id = sys.argv[2]
-        print('agent id:' + agent_id)
+	    agent_id = sys.argv[2]
+	    agent_max_vel = sys.argv[3]
         vacuum_cleaning(agent_id, agent_max_vel)
 
     elif exec_mode == 'inspection':
-        agent_1_max_vel = sys.argv[2]
-        agent_2_max_vel = sys.argv[3]
-        inspection(agent_1_max_vel, agent_2_max_vel)
-
+	    agent_id = sys.argv[2]
+	    agent_max_vel = sys.argv[3]
+        inspection(agent_id, agent_max_vel)
+	
     else:
         print("Code not found")
         raise NotImplementedError
