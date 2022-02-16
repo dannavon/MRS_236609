@@ -1,10 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <module type="PYTHON_MODULE" version="4">
   <component name="NewModuleRootManager">
-    <content url="file://$MODULE_DIR$/../../../devel" />
-    <content url="file://$MODULE_DIR$/../.." />
+    <content url="file://$MODULE_DIR$/../../../devel/lib" />
+    <content url="file://$MODULE_DIR$/../..">
+      <sourceFolder url="file://$MODULE_DIR$/.." isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/../.." isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/../venv" />
+    </content>
+    <content url="file:///opt/ros/melodic/include" />
     <content url="file:///opt/ros/melodic/lib/python2.7/dist-packages" />
-    <content url="file:///opt/ros/melodic/share" />
+    <content url="file:///opt/ros/melodic/share">
+      <excludeFolder url="file:///opt/ros/melodic/share/tf2" />
+      <excludeFolder url="file:///opt/ros/melodic/share/tf2_eigen" />
+      <excludeFolder url="file:///opt/ros/melodic/share/tf2_geometry_msgs" />
+      <excludeFolder url="file:///opt/ros/melodic/share/tf2_kdl" />
+      <excludeFolder url="file:///opt/ros/melodic/share/tf2_py" />
+      <excludeFolder url="file:///opt/ros/melodic/share/tf_conversions" />
+    </content>
+    <content url="file:///usr/include" />
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="library" name="workspace" level="project" />

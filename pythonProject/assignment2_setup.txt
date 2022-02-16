@@ -1,7 +1,11 @@
 cd ~/ws/
 source devel/setup.bash
 export TURTLEBOT3_MODEL=burger
-roslaunch MRS_236609 turtlebot3_closed_room.launch #
+roslaunch MRS_236609 turtlebot3_closed_room.launch
+
+cd ~/ws/
+source devel/setup.bash
+export TURTLEBOT3_MODEL=burger
 roslaunch MRS_236609 turtlebot3_closed_room_with_2_spheres.launch
 ______________________________________________________________________
 
@@ -12,6 +16,11 @@ roslaunch turtlebot3_navigation turtlebot3_navigation.launch map_file:=$HOME/ws/
 ______________________________________________________________________
 
 cd ~/ws/
+source ~/ws/devel/setup.bash
+export TURTLEBOT3_MODEL=burger
+rosrun MRS_236609 assignment2.py cleaning
+
+cd ~/ws/
 source devel/setup.bash
 export TURTLEBOT3_MODEL=burger
-rosrun MRS_236609 assignment2.py cleaning #or inspection
+rosrun MRS_236609 assignment2.py inspection

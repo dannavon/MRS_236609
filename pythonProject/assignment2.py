@@ -1,5 +1,4 @@
 #!/usr/bin/env python2.7
-
 import rospy
 import actionlib
 import sys
@@ -9,17 +8,15 @@ import numpy as np
 import dynamic_reconfigure.client
 import cv2 as cv
 import matplotlib.pyplot as plt
-import os
-os.environ["ROS_ROOT"] = "/opt/ros/melodic/share/ros"
-os.environ["ROS_PACKAGE_PATH"] = "/opt/ros/melodic/share"
-
 import tf
+import logging
 
 from scipy.spatial.transform import Rotation as R
 # from scipy.misc import toimage
 from scipy import ndimage
 # from tf.transformations import euler_from_quaternion, quaternion_from_euler
 import dynamic_reconfigure.client
+import std_msgs
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from geometry_msgs.msg import PoseWithCovarianceStamped, Quaternion
 from nav_msgs.srv import GetMap
@@ -58,26 +55,25 @@ def is_same_edge(e1, e2):
 
 class CleaningBlocks:
 
-    def __init__(self, occ_map):
+    def __init__(self, ms):
         self.triangles = []
         self.triangle_order = []
-        self.occ_map = occ_map
-        self.map_size = occ_map.shape
+        self.occ_map = ms.map_arr
+        self.map_size = ms.map_arr.shape
         self.rect = (0, 0, self.map_size[1], self.map_size[0])
         self.graph = Graph()
 
         # find corners
-        ret, thresh = cv.threshold(occ_map, 90, 255, 0)
-        thresh = np.uint8(thresh)
-        self.map_rgb = cv.cvtColor(thresh, cv.COLOR_GRAY2BGR)
+        self.map_rgb = ms.map_rgb
         # map_img_th = thresh.copy()
         # im2, contours, hierarchy = cv.findContours(map_img_th, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
         # cv.drawContours(map_img_th, contours, -1, (255, 255, 255), 3)
-        corners = cv.goodFeaturesToTrack(thresh, 25, 0.01, 10)
+        corners = cv.goodFeaturesToTrack(ms.map_binary, 20, 0.01, 10)
         self.corners = np.int0(corners)
 
         # find triangles
         # Create an instance of Subdiv2D
+        self.sub_div = cv.Subdiv2D(self.rect)
         self.sub_div = cv.Subdiv2D(self.rect)
         # Insert points into sub_div
         self.sub_div.insert(corners)
@@ -93,10 +89,15 @@ class CleaningBlocks:
             pt1 = (t[0], t[1])
             pt2 = (t[2], t[3])
             pt3 = (t[4], t[5])
+            delaunay_color=(255,0,0)
+            img = self.map_rgb
+
             if rect_contains(r, pt1) and rect_contains(r, pt2) and rect_contains(r, pt3):
                 center = (np.round((t[0] + t[2] + t[4]) / 3), np.round((t[1] + t[3] + t[5]) / 3))
                 center2 = (np.uint32(np.round((t[1] + t[3] + t[5]) / 3)), np.uint32(np.round((t[0] + t[2] + t[4]) / 3)))
-
+                # cv.line(img, pt2, pt3, delaunay_color, 1, cv.LINE_AA, 0)
+                # cv.line(img, pt3, pt1, delaunay_color, 1, cv.LINE_AA, 0)
+                # cv.line(img, pt1, pt2, delaunay_color, 1, cv.LINE_AA, 0)
                 if self.point_in_room(center2):
                     # if self.line_in_room(mid1) and self.line_in_room(mid2) and self.line_in_room(mid3):
                     mat = np.array([[t[0], t[1], 1], [t[2], t[3], 1], [t[4], t[5], 1]])
@@ -109,7 +110,8 @@ class CleaningBlocks:
                     self.triangles.append(Triangle(t, center, area, tri_edges))
                     last_tri_ind = len(self.triangles)-1
                     self.add_adjacent_tri_edge(last_tri_ind)
-
+        # cv.imshow('delaunay', img)
+        # cv.waitKey(0)
     def get_triangles(self):
         return self.triangles
 
@@ -218,7 +220,8 @@ class CleaningBlocks:
             triangle_order.append(next)
             for key in dict_vector[curr].keys():
                 if key is not curr:
-                    dict_vector[key].pop(curr)
+                    if curr in dict_vector[key]:
+                        dict_vector[key].pop(curr)
             curr = next
         # print(dist_mat)
         # print(triangle_order)
@@ -271,6 +274,9 @@ class MapService(object):
         shape = self.map_data.info.height, self.map_data.info.width
         self.map_arr = np.array(self.map_data.data, dtype='float32').reshape(shape)
         self.resolution = self.map_data.info.resolution
+        res,map_binary = cv.threshold(self.map_arr, 90, 255, 0)
+        self.map_binary = np.uint8(map_binary)
+        self.map_rgb = cv.cvtColor(self.map_binary, cv.COLOR_GRAY2BGR)
 
     def show_map(self, point=None):
         plt.imshow(self.map_arr)
@@ -306,6 +312,7 @@ class MapService(object):
         pos = np.array([self.initial_pose.position.x, self.initial_pose.position.y])
         return self.position_to_map(pos)
 
+
 # Based on https://stackabuse.com/dijkstras-algorithm-in-python/
 class Graph:
     def __init__(self):
@@ -329,72 +336,30 @@ class Graph:
 
     def dijkstra(self, start_vertex):
         num_vertices = len(self.edges)
-        D = {v: float('inf') for v in range(num_vertices)}
+        D = {v: float('inf') for v in self.edges.keys()}
         D[start_vertex] = 0
 
         pq = PriorityQueue()
         pq.put((0, start_vertex))
-
+        visited = []
         while not pq.empty():
             (dist, current_vertex) = pq.get()
-            self.visited.append(current_vertex)
+            visited.append(current_vertex)
 
             for neighbor, dist in self.edges[current_vertex]:
-                if neighbor not in self.visited:
-                    old_cost = D[neighbor]
-                    new_cost = D[current_vertex] + dist
-                    if new_cost < old_cost:
-                        pq.put((new_cost, neighbor))
-                        D[neighbor] = new_cost
-        self.visited = []
+                if neighbor in self.edges:
+                    if neighbor not in visited:
+                        old_cost = D[neighbor]
+                        new_cost = D[current_vertex] + dist
+                        if new_cost < old_cost:
+                            pq.put((new_cost, neighbor))
+                            D[neighbor] = new_cost
+
         return D
 
 
         pos = np.array([self.initial_pose.position.x, self.initial_pose.position.y])
         return self.position_to_map(pos)
-
-# Based on https://stackabuse.com/dijkstras-algorithm-in-python/
-class Graph:
-    def __init__(self):
-        self.edges = {}
-        self.visited = []
-
-    def add_edges(self, edges):
-        for e in edges:
-            self.add_edge(e[0], e[1], e[2])
-
-    def add_edge(self, u, v, weight):
-        if u in self.edges:
-            self.edges[u].append((v, weight))
-        else:
-            self.edges[u] = [(v, weight)]
-
-        if v in self.edges:
-            self.edges[v].append((u, weight))
-        else:
-            self.edges[v] = [(u, weight)]
-
-    def dijkstra(self, start_vertex):
-        num_vertices = len(self.edges)
-        D = {v: float('inf') for v in range(num_vertices)}
-        D[start_vertex] = 0
-
-        pq = PriorityQueue()
-        pq.put((0, start_vertex))
-
-        while not pq.empty():
-            (dist, current_vertex) = pq.get()
-            self.visited.append(current_vertex)
-
-            for neighbor, dist in self.edges[current_vertex]:
-                if neighbor not in self.visited:
-                    old_cost = D[neighbor]
-                    new_cost = D[current_vertex] + dist
-                    if new_cost < old_cost:
-                        pq.put((new_cost, neighbor))
-                        D[neighbor] = new_cost
-        self.visited = []
-        return D
 
 
 class Path_finder:
@@ -718,10 +683,9 @@ def vacuum_cleaning(ms, cb):
     for triangle in triangle_list:
         t = triangle.coordinates
         triangles.append((np.array((t[0], t[1], 0)), np.array((t[4], t[5], 0)), np.array((t[2], t[3], 0))))
-        # print(triangles[-1])
 
     # Path planning
-    path_finder   = Path_finder()
+    path_finder = Path_finder()
     borders, path = path_finder.find(triangles=triangles)
     print("Done creating the path. Length:", len(path))
 
@@ -731,26 +695,122 @@ def vacuum_cleaning(ms, cb):
     # Moves the robot according to the path
     move_robot_on_path(map_service=ms, path=path)
 
-
-### INSPECTION ###
+# class MoveBaseSeq():
+#
+#     def __init__(self):
+#
+#         rospy.init_node('move_base_sequence')
+#         points_seq = rospy.get_param('move_base_seq/p_seq')
+#         # Only yaw angle required (no ratotions around x and y axes) in deg:
+#         yaweulerangles_seq = rospy.get_param('move_base_seq/yea_seq')
+#         # List of goal quaternions:
+#         quat_seq = list()
+#         # List of goal poses:
+#         self.pose_seq = list()
+#         self.goal_cnt = 0
+#         for yawangle in yaweulerangles_seq:
+#             # Unpacking the quaternion list and passing it as arguments to Quaternion message constructor
+#             quat_seq.append(Quaternion(*(quaternion_from_euler(0, 0, yawangle * math.pi / 180, axes='sxyz'))))
+#         n = 3
+#         # Returns a list of lists [[point1], [point2],...[pointn]]
+#         points = [points_seq[i:i + n] for i in range(0, len(points_seq), n)]
+#         for point in points:
+#             # Exploit n variable to cycle in quat_seq
+#             self.pose_seq.append(Pose(Point(*point), quat_seq[n - 3]))
+#             n += 1
+#         # Create action client
+#         self.client = actionlib.SimpleActionClient('move_base', MoveBaseAction)
+#         rospy.loginfo("Waiting for move_base action server...")
+#         wait = self.client.wait_for_server(rospy.Duration(5.0))
+#         if not wait:
+#             rospy.logerr("Action server not available!")
+#             rospy.signal_shutdown("Action server not available!")
+#             return
+#         rospy.loginfo("Connected to move base server")
+#         rospy.loginfo("Starting goals achievements ...")
+#         self.movebase_client()
+#
+#     def active_cb(self):
+#         rospy.loginfo("Goal pose " + str(self.goal_cnt + 1) + " is now being processed by the Action Server...")
+#
+#     def feedback_cb(self, feedback):
+#         # To print current pose at each feedback:
+#         # rospy.loginfo("Feedback for goal "+str(self.goal_cnt)+": "+str(feedback))
+#         rospy.loginfo("Feedback for goal pose " + str(self.goal_cnt + 1) + " received")
+#
+#     def done_cb(self, status, result):
+#         self.goal_cnt += 1
+#         # Reference for terminal status values: http://docs.ros.org/diamondback/api/actionlib_msgs/html/msg/GoalStatus.html
+#         if status == 2:
+#             rospy.loginfo("Goal pose " + str(
+#                 self.goal_cnt) + " received a cancel request after it started executing, completed execution!")
+#
+#         if status == 3:
+#             rospy.loginfo("Goal pose " + str(self.goal_cnt) + " reached")
+#             if self.goal_cnt < len(self.pose_seq):
+#                 next_goal = MoveBaseGoal()
+#                 next_goal.target_pose.header.frame_id = "map"
+#                 next_goal.target_pose.header.stamp = rospy.Time.now()
+#                 next_goal.target_pose.pose = self.pose_seq[self.goal_cnt]
+#                 rospy.loginfo("Sending goal pose " + str(self.goal_cnt + 1) + " to Action Server")
+#                 rospy.loginfo(str(self.pose_seq[self.goal_cnt]))
+#                 self.client.send_goal(next_goal, self.done_cb, self.active_cb, self.feedback_cb)
+#             else:
+#                 rospy.loginfo("Final goal pose reached!")
+#                 rospy.signal_shutdown("Final goal pose reached!")
+#                 return
+#
+#         if status == 4:
+#             rospy.loginfo("Goal pose " + str(self.goal_cnt) + " was aborted by the Action Server")
+#             rospy.signal_shutdown("Goal pose " + str(self.goal_cnt) + " aborted, shutting down!")
+#             return
+#
+#         if status == 5:
+#             rospy.loginfo("Goal pose " + str(self.goal_cnt) + " has been rejected by the Action Server")
+#             rospy.signal_shutdown("Goal pose " + str(self.goal_cnt) + " rejected, shutting down!")
+#             return
+#
+#         if status == 8:
+#             rospy.loginfo("Goal pose " + str(
+#                 self.goal_cnt) + " received a cancel request before it started executing, successfully cancelled!")
+#
+#     def movebase_client_next_goal(self):
+#         goal = MoveBaseGoal()
+#         goal.target_pose.header.frame_id = "map"
+#         goal.target_pose.header.stamp = rospy.Time.now()
+#         goal.target_pose.pose = self.pose_seq[self.goal_cnt]
+#         rospy.loginfo("Sending goal pose " + str(self.goal_cnt + 1) + " to Action Server")
+#         rospy.loginfo(str(self.pose_seq[self.goal_cnt]))
+#         self.client.send_goal(goal, self.done_cb, self.active_cb, self.feedback_cb)
+#         rospy.spin()
+#
+#     ### INSPECTION ###
 
 class InspectionCostmapUpdater:
-    def __init__(self, occ_map):
+    def __init__(self, ms):
+        self.last_msg = None
+        self.ms = ms
         self.differences_map_file = 'differences_map.png'
-        self.occ_map              = self.binary_dilation(map=occ_map, iterations1=0, iterations2=1)
-        self.cost_map             = None
-        self.differences_map      = None
-        self.shape                = None
+        self.occ_map = self.binary_dilation(map=ms.map_arr, iterations1=0, iterations2=1)
+
+        map_dilated = cv.dilate(ms.map_arr, cv.getStructuringElement(cv.MORPH_CROSS, (3, 3)))
+        res, map_dilated = cv.threshold(map_dilated, 95, 255, 0)
+        self.occ_map_dilated = np.uint8(map_dilated)
+
+        self.cost_map = None
+        self.differences_map = None
+        self.shape = None
         rospy.Subscriber('/move_base/global_costmap/costmap'        , OccupancyGrid      , self.init_costmap_callback  )
         rospy.Subscriber('/move_base/global_costmap/costmap_updates', OccupancyGridUpdate, self.costmap_callback_update)
+        self.ins_pub = rospy.Publisher('/inspection_report', std_msgs.msg.String, queue_size=10)
 
-    def binary_dilation(self, map, iterations1, iterations2):
+    def binary_dilation(self,map, iterations1, iterations2):
         occ_map_ = self.map_to_binary_map(map=map)
         if 0 < iterations1:
             struct1 = ndimage.generate_binary_structure(2, 2)
             occ_map_ = ndimage.binary_dilation(occ_map_, structure=struct1, iterations=iterations1).astype(occ_map_.dtype)
         if 0 < iterations2:
-            struct2  = ndimage.generate_binary_structure(2, 1)
+            struct2 = ndimage.generate_binary_structure(2, 1)
             occ_map_ = ndimage.binary_dilation(occ_map_, structure=struct2, iterations=iterations2).astype(occ_map_.dtype)
         return occ_map_
 
@@ -765,65 +825,114 @@ class InspectionCostmapUpdater:
         return map_
 
     def init_costmap_callback(self, msg):
-        self.shape    = msg.info.height, msg.info.width
-        self.cost_map = np.array(msg.data).reshape(self.shape)
+        self.shape = msg.info.height, msg.info.width
+        self.cost_map = np.array(msg.data, dtype=np.uint8).reshape(self.shape)
+        self.last_msg = msg
 
     def costmap_callback_update(self, msg):
-        shape = msg.height, msg.width
-        data  = np.array(msg.data).reshape(shape)
-        self.cost_map[msg.y:msg.y + shape[0], msg.x: msg.x + shape[1]] = data
-        # plt.imshow(self.occ_map)
-        # plt.show()
-        # plt.imshow(self.cost_map)
-        # plt.show()
-        cost_map_ = np.where(self.cost_map < 90, 0, self.cost_map)
-        # plt.imshow(self.cost_map)
-        # plt.show()
-        cost_map_ = self.map_to_binary_map(map=cost_map_)
-        # exit(-1)
-        self.differences_map = cost_map_ - self.occ_map
-        self.differences_map = np.where(self.differences_map < 0.0, 0.0, self.differences_map)
-        self.differences_map = self.binary_dilation(map=self.differences_map, iterations1=3, iterations2=2)
-        plt.imshow(self.differences_map)
-        # plt.show()
-        plt.savefig(self.differences_map_file)
-        self.calculate_number_of_circles_in_map()
-        self.show_map()
+        if msg.header.stamp.secs - self.last_msg.header.stamp.secs > 7:
+            shape = msg.height, msg.width
+            data = np.array(msg.data, dtype=np.uint8).reshape(shape)
+            #clear contour before counting
+            self.cost_map[msg.y:msg.y + shape[0], msg.x: msg.x + shape[1]] = data
 
-    def calculate_number_of_circles_in_map(self):
-        filename = self.differences_map_file
-        # Loads an image
-        src      = cv.imread(cv.samples.findFile(filename), cv.IMREAD_COLOR)
-        # Check if image is loaded fine
-        if src is None:
-            print ('Error opening image!')
-            print ('Usage: hough_circle.py [image_name -- default ' + self.differences_map_file + '] \n')
-            return -1
-        gray = cv.cvtColor(src, cv.COLOR_BGR2GRAY)
-        gray = cv.medianBlur(gray, 5)
-        # plt.imshow(gray)
-        # plt.show()
-        rows = gray.shape[0]
-        circles = cv.HoughCircles(gray, cv.HOUGH_GRADIENT, 1, rows / 16,#/ 8
-                                  param1=100, param2=9,
-                                  # param1=100, param2=30,
-                                  minRadius=9, maxRadius=21)
-                                  # minRadius=1, maxRadius=30)
-        if circles is not None:
-            circles = np.uint16(np.around(circles))
-            for i in circles[0, :]:
-                center = (i[0], i[1])
-                # circle center
-                cv.circle(src, center, 1, (0, 100, 100), 3)
-                # circle outline
-                radius = i[2]
-                cv.circle(src, center, radius, (255, 0, 255), 3)
-            print("detected circles", len(circles))
-            # cv.imshow("detected circles", src)
-            cv.imshow("detected circles" + str(len(circles)), src)
-            cv.waitKey(0)
-        else:
-            print("detected 0 circles")
+            # cost_map_ = np.where(self.cost_map < 90, 0, self.cost_map)
+            res, cost_binary = cv.threshold(self.cost_map, 95, 255, 0)
+            # cv.imwrite('figs/cost_map' + str(self.last_msg.header.stamp.secs) + '.jpg', self.cost_map)
+            # cv.imshow('cost_map', self.cost_map)
+            # cv.waitKey(0)
+            # cv.imwrite('figs/map_binary' + str(self.last_msg.header.stamp.secs) + '.jpg', cost_binary)
+            # cv.imshow('map_binary', map_binary)
+            # cv.waitKey(0)
+            differences_map = np.abs(cost_binary-self.occ_map_dilated)
+            cv.imwrite('figs/differences_map' + str(self.last_msg.header.stamp.secs) + '.jpg', differences_map)
+            # cv.imshow('differences_map', differences_map)
+            # cv.waitKey(0)
+            rows = cost_binary.shape[0]
+            circles = cv.HoughCircles(differences_map, cv.HOUGH_GRADIENT, 1, rows / 16,  # / 8
+                                      param1=100, param2=9,  # param2 - accumulate centers - the smaller it is the more false circles
+                                      minRadius=4, maxRadius=11)
+
+            num_of_circles = 0
+            if circles is not None:
+                circles = np.uint16(np.around(circles))
+                for i in circles[0, :]:
+                    center = (i[0], i[1])
+                    # circle center
+                    cv.circle(cost_binary, center, 1, (0, 100, 100), 3)
+                    # circle outline
+                    radius = i[2]
+                    cv.circle(cost_binary, center, radius, (255, 0, 255), 3)
+                num_of_circles = circles.shape[1]
+                cv.imwrite("figs/detected circles_" + str(num_of_circles) + '_' + str(self.last_msg.header.stamp.secs) + '.jpg', cost_binary)
+                # cv.imshow("detected circles_" + str(len(circles)), cost_binary)
+                # cv.waitKey(0)
+
+            print("detected circles ", num_of_circles)
+            self.ins_pub.publish(std_msgs.msg.String(str(num_of_circles) + " spheres detected at time " + str(msg.header.stamp)))
+            print(str(num_of_circles) + " spheres detected at time " + str(msg.header.stamp))
+            self.last_msg = msg
+
+    # def costmap_callback_update(self, msg):
+    #     if(msg.header.stamp.secs-self.last_msg.header.stamp.secs > 5):
+    #         self.last_msg = msg
+    #         shape = msg.height, msg.width
+    #         data = np.array(msg.data).reshape(shape)
+    #         self.cost_map[msg.y:msg.y + shape[0], msg.x: msg.x + shape[1]] = data
+    #
+    #         cost_map_ = np.where(self.cost_map < 90, 0, self.cost_map)
+    #         plt.imshow(cost_map_)
+    #         plt.show()
+    #         cost_map_ = self.map_to_binary_map(map=cost_map_)
+    #         # exit(-1)
+    #         self.differences_map = ms.map_arr - self.occ_map
+    #         self.differences_map = np.where(self.differences_map < 0.0, 0.0, self.differences_map)
+    #         self.differences_map = self.binary_dilation(map=self.differences_map, iterations1=3, iterations2=2)
+    #         plt.imshow(self.differences_map)
+    #         # plt.show()
+    #         plt.savefig(self.differences_map_file)
+    #         num_of_circles = self.calculate_number_of_circles_in_map()
+    #         self.ins_pub.publish(std_msgs.msg.String(str(num_of_circles) +"spheres detected at time" + str(msg.header.stamp)))
+    #         print(str(num_of_circles) + "spheres detected at time " + str(msg.header.stamp))
+    #
+    #         self.show_map()
+
+    # def calculate_number_of_circles_in_map(self):
+    #     filename = self.differences_map_file
+    #     # Loads an image
+    #     src      = cv.imread(cv.samples.findFile(filename), cv.IMREAD_COLOR)
+    #     # Check if image is loaded fine
+    #     if src is None:
+    #         print ('Error opening image!')
+    #         print ('Usage: hough_circle.py [image_name -- default ' + self.differences_map_file + '] \n')
+    #         return -1
+    #     gray = cv.cvtColor(src, cv.COLOR_BGR2GRAY)
+    #     # gray = cv.medianBlur(gray, 5)
+    #     plt.imshow(gray)
+    #     plt.show()
+    #     rows = gray.shape[0]
+    #     circles = cv.HoughCircles(gray, cv.HOUGH_GRADIENT, dp=1,
+    #                               mindist=5,#rows / 16,#/ 8
+    #                               param1=100, param2=15,
+    #                               # param1=100, param2=30,
+    #                               minRadius=5, maxRadius=11)
+    #                               # minRadius=1, maxRadius=30)
+    #     if circles is not None:
+    #         circles = np.uint16(np.around(circles))
+    #         for i in circles[0, :]:
+    #             center = (i[0], i[1])
+    #             # circle center
+    #             cv.circle(src, center, 1, (0, 100, 100), 3)
+    #             # circle outline
+    #             radius = i[2]
+    #             cv.circle(src, center, radius, (255, 0, 255), 3)
+    #         print("detected circles", len(circles))
+    #         # cv.imshow("detected circles", src)
+    #         cv.imshow("detected circles" + str(len(circles)), src)
+    #         cv.waitKey(0)
+    #
+    #     print("detected 0 circles")
+    #     return 0
 
     def show_map(self):
         if not self.cost_map is None:
@@ -831,7 +940,8 @@ class InspectionCostmapUpdater:
             # plt.imshow(self.cost_map)
             plt.show()
 
-def inspection(ms):
+
+def inspection(ms, cb):
     print('start inspection')
 
     occ_map = ms.map_arr
@@ -839,29 +949,35 @@ def inspection(ms):
     # plt.imshow(occ_map)
     # plt.show()
 
-    path = []
-    # path.append({"position": (260, 200), "angle": 0})
-    path.append({"position": (125, 150), "angle": 0})
-    # path.append({"position": (200, 200), "angle": 0})
-    move_robot_on_path(map_service=ms, path=path)
+    cmu = InspectionCostmapUpdater(ms)
+    # rospy.spin()
 
-    cmu = InspectionCostmapUpdater(occ_map)
+    path = []
+    triangles = cb.get_triangles()
+    for tri in triangles:
+        p=tri.center
+        path.append({"position": p, "angle": 0})
+    # path.append({"position": (215, 200), "angle": 0})
+    move_robot_on_path(map_service=ms, path=path)
     rospy.spin()
+
 
 
 if __name__ == '__main__':
 
 
-    rospy.init_node('get_map_example')
+    rospy.init_node('get_map_example', anonymous=True)
+    reload(logging)
+
     rc_DWA_client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS/")
-    rc_DWA_client.update_configuration({"max_vel_x": np.inf})
-    rc_DWA_client.update_configuration({"max_vel_trans": np.inf})
+    rc_DWA_client.update_configuration({"max_vel_x": 2.5})
+    rc_DWA_client.update_configuration({"max_vel_trans": 2.5})
 
     ms = MapService()
     # rc_DWA_client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS/")
     # rc_DWA_client.update_configuration({"max_vel_x": 2.5})
     Triangle = namedtuple('Triangle', ['coordinates', 'center', 'area', 'edges'])
-    cb = CleaningBlocks(ms.map_arr)
+    cb = CleaningBlocks(ms)
     first_pose = ms.get_first_pose()
     cb.sort(first_pose)
 
@@ -869,7 +985,7 @@ if __name__ == '__main__':
 
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
-    # exec_mode = 'cleaning'
+
     # exec_mode = 'inspection'
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
@@ -878,7 +994,7 @@ if __name__ == '__main__':
     if exec_mode == 'cleaning':
         vacuum_cleaning(ms, cb)
     elif exec_mode == 'inspection':
-        inspection(ms=ms)
+        inspection(ms, cb)
     else:
         print("Code not found")
         raise NotImplementedError

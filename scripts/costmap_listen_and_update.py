@@ -20,12 +20,17 @@ class CostmapUpdater:
         self.shape = msg.info.height, msg.info.width
         self.cost_map = np.array(msg.data).reshape(self.shape)
 
+        self.last_msg = msg
+
     def costmap_callback_update(self, msg):
-        print('periodically')  # For the student to understand
+        # print('period: '+ self.last_msg.header.stamp.secs-msg.header.stamp.secs)  # For the student to understand
         shape = msg.height, msg.width
         data = np.array(msg.data).reshape(shape)
         self.cost_map[msg.y:msg.y + shape[0], msg.x: msg.x + shape[1]] = data
         self.show_map()  # For the student to see that it works
+        if(msg.header.stamp.secs-self.last_msg.header.stamp.secs > 5):
+            print("spheres detected at time " + str(msg.header.stamp))
+            self.last_msg = msg
 
     def show_map(self):
         if not self.cost_map is None:

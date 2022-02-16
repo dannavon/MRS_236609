@@ -36,6 +36,10 @@ class MapService(object):
 if __name__ == '__main__':
     rospy.init_node('get_map_example')
     ms = MapService()
-    ms.show_map(ms.position_to_map(np.array([0.0, 0.0])))
+
+    ms.show_map(ms.position_to_map(np.array([-5.0, -5.0])))
     ms.show_map(ms.position_to_map(np.array([0.5, -3.3])))
+    ms.show_map(ms.position_to_map(np.array([0.5, -3.3])))
+    ms.show_map(ms.position_to_map(np.array([-2.9, -1])))
+    print(ms.position_to_map(np.array([-2.9, -1])))
     print(ms.resolution)
