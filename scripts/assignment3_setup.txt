@@ -1,0 +1,28 @@
+cd ~/ws/
+source devel/setup.bash
+export TURTLEBOT3_MODEL=burger
+roslaunch MRS_236609 multi_turtlebot3.launch
+______________________________________________________________________
+
+cd ~/ws/
+source devel/setup.bash
+export TURTLEBOT3_MODEL=burger
+roslaunch MRS_236609 multi_turtlebot3_navigation.launch map_file:=$HOME/ws/src/MRS_236609/maps/closed_room.yaml
+______________________________________________________________________
+
+cd ~/ws/
+source devel/setup.bash
+export TURTLEBOT3_MODEL=burger
+rosrun MRS_236609 dirt_publisher_ex3.py
+______________________________________________________________________
+
+cd ~/ws/
+source devel/setup.bash
+export TURTLEBOT3_MODEL=burger
+rosrun MRS_236609 assignment3.py cleaning 0 # this is agent id can be 0 or 1
+______________________________________________________________________
+
+cd ~/ws/
+source devel/setup.bash
+export TURTLEBOT3_MODEL=burger
+rosrun MRS_236609 assignment3.py inspection $(agent_id) $(agent_max_vel) # agent_id is 0 or 1, and agent_max_vel is bounded by 0.22

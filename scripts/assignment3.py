@@ -8,7 +8,7 @@ import numpy as np
 import dynamic_reconfigure.client
 import cv2 as cv
 import matplotlib.pyplot as plt
-import tf
+# import tf
 import logging
 import actionlib
 import multi_move_base
@@ -18,7 +18,7 @@ from actionlib_msgs.msg import GoalStatus
 from geometry_msgs.msg import Pose, Point, Quaternion
 from scipy.spatial.transform import Rotation as R
 from scipy import ndimage
-from tf.transformations import euler_from_quaternion, quaternion_from_euler
+# from tf.transformations import euler_from_quaternion, quaternion_from_euler
 import dynamic_reconfigure.client
 import std_msgs
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
@@ -36,7 +36,7 @@ class CleaningBlocks:
         self.sub_div = None
         self.corners = None
         self.triangles = []
-        self.triangle_order = []
+        # self.triangle_order = []
         self.occ_map = ms.map_arr
         self.map_size = ms.map_arr.shape
         self.rect = (0, 0, self.map_size[1], self.map_size[0])
@@ -50,6 +50,9 @@ class CleaningBlocks:
         self.find_corners()
         # Filter triangles outside the polygon
         self.extract_triangles()
+
+        self.dist_mat = self.graph.get_dist_mat()
+
     def find_corners(self):
         # im2, contours, hierarchy = cv.findContours(map_img_th, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
         # cv.drawContours(map_img_th, contours, -1, (255, 255, 255), 3)
@@ -57,7 +60,7 @@ class CleaningBlocks:
         corners = cv.goodFeaturesToTrack(ms.map_binary, 20, 0.01, 10)
         self.corners = np.int0(corners)
 
-                # Create an instance of Subdiv2D
+        # Create an instance of Subdiv2D
         self.sub_div = cv.Subdiv2D(self.rect)
         # Insert points into sub_div
         self.sub_div.insert(corners)
@@ -71,7 +74,7 @@ class CleaningBlocks:
             pt1 = (t[0], t[1])
             pt2 = (t[2], t[3])
             pt3 = (t[4], t[5])
-            delaunay_color=(255,0,0)
+            delaunay_color = (255, 0, 0)
             img = self.map_rgb
 
             if rect_contains(r, pt1) and rect_contains(r, pt2) and rect_contains(r, pt3):
@@ -80,8 +83,11 @@ class CleaningBlocks:
                 # cv.line(img, pt2, pt3, delaunay_color, 1, cv.LINE_AA, 0)
                 # cv.line(img, pt3, pt1, delaunay_color, 1, cv.LINE_AA, 0)
                 # cv.line(img, pt1, pt2, delaunay_color, 1, cv.LINE_AA, 0)
-                if self.point_in_room(center2):
-                    # if self.line_in_room(mid1) and self.line_in_room(mid2) and self.line_in_room(mid3):
+                mid1 = (np.uint32((t[1] + t[3]) / 2), np.uint32((t[0] + t[2]) / 2))
+                mid2 = (np.uint32((t[3] + t[5]) / 2), np.uint32((t[2] + t[4]) / 2))
+                mid3 = (np.uint32((t[1] + t[5]) / 2), np.uint32((t[0] + t[4]) / 2))
+                if self.point_in_room(center2) and (self.line_in_room(mid1) and self.line_in_room(mid2) and
+                                                    self.line_in_room(mid3)):
                     mat = np.array([[t[0], t[1], 1], [t[2], t[3], 1], [t[4], t[5], 1]])
                     area = np.linalg.det(mat) / 2
 
@@ -89,22 +95,59 @@ class CleaningBlocks:
                                  [pt2, pt3, distance(pt2, pt3)]]
                     # center_edges = [[pt1, center, distance(pt1, center)], [pt1, center, distance(pt1, center)],
                     #                 [pt2, center, distance(pt2, center)]]
-                    self.triangles.append(Triangle(t, center, area, tri_edges))
-                    last_tri_ind = len(self.triangles)-1
+                    new_triangle = Triangle(t, center, area, tri_edges)
+                    self.triangles.append(new_triangle)
+                    last_tri_ind = len(self.triangles) - 1
                     self.add_adjacent_tri_edge(last_tri_ind)
         # cv.imshow('delaunay', img)
         # cv.waitKey(0)
-    def get_triangles(self):
-        return self.triangles
+
+    def line_in_room(self, mid_p_i):
+
+        map = self.occ_map
+
+        if map[mid_p_i] != -1:  # mid pixel
+            return True
+
+        size = map.shape
+        if mid_p_i[0] > 0:
+            if map[(mid_p_i[0] - 1, mid_p_i[1])] != -1:  # left pixel
+                return True
+            if mid_p_i[1] > 0:  # left up pixel
+                if map[(mid_p_i[0] - 1, mid_p_i[1] - 1)] != -1:
+                    return True
+            if mid_p_i[1] < size[0] - 1:  # left down pixel
+                if map[(mid_p_i[0] - 1, mid_p_i[1] + 1)] != -1:
+                    return True
+
+        if mid_p_i[0] < size[1] - 1:
+            if map[(mid_p_i[0] + 1, mid_p_i[1])] != -1:  # right pixel
+                return True
+            if mid_p_i[1] > 0:  # left up pixel
+                if map[(mid_p_i[0] + 1, mid_p_i[1] - 1)] != -1:
+                    return True
+            if mid_p_i[1] < size[0] - 1:  # left down pixel
+                if map[(mid_p_i[0] + 1, mid_p_i[1] + 1)] != -1:
+                    return True
+
+        if mid_p_i[1] > 0 and \
+                map[(mid_p_i[0], mid_p_i[1] - 1)] != -1:  # up pixel
+            return True
+
+        if mid_p_i[1] < size[0] - 1 and \
+                map[(mid_p_i[0], mid_p_i[1] + 1)] != -1:  # down pixel
+            return True
+
+        return False
 
     # Draw delaunay triangles
-    def draw_triangles(self, delaunay_color):
+    def draw_triangles(self, delaunay_color, triangles):
         img = self.map_rgb
         # Draw points
         for p in self.corners:
             draw_point(img, p[0], (0, 0, 255))
 
-        for triangle in self.triangles:
+        for triangle in triangles:
             t = triangle.coordinates
             pt1 = (t[0], t[1])
             pt2 = (t[2], t[3])
@@ -120,13 +163,12 @@ class CleaningBlocks:
         cv.waitKey(0)
         # cv.imwrite('delaunay.jpg', img)
 
-    def point_in_room(self, mid_p_i):    # Funny - tried to check lines
+    def point_in_room(self, mid_p_i):
         map = self.occ_map
 
         if map[mid_p_i] != -1:  # mid pixel
             return True
         return False
-
 
     def add_adjacent_tri_edge(self, last_tri_ind):
         for i in range(last_tri_ind):
@@ -135,7 +177,7 @@ class CleaningBlocks:
                 b = self.triangles[last_tri_ind].center
                 self.graph.add_edge(i, last_tri_ind, distance(a, b))
 
-    def is_neighbor(self, v_i, u_i): #Funny
+    def is_neighbor(self, v_i, u_i):
         v_cor = self.triangles[v_i].coordinates
         u_cor = self.triangles[u_i].coordinates
         v_edges = self.triangles[v_i].edges
@@ -165,147 +207,159 @@ class CleaningBlocks:
                 ind = i
         return ind
 
-    def draw_triangle_order(self):
+    def draw_path(self, triangle_order):
         img = self.map_rgb
-        triangle_order=self.triangle_order
-        for (i, tri) in enumerate(self.triangles):
-            c1 = tri.center
-            c1 = tuple(np.uint32((round(c1[0]), round(c1[1]))))
+        c1 = triangle_order[0].center
+        c1 = tuple(np.uint32((round(c1[0]), round(c1[1]))))
+        for i in range(1, len(triangle_order)):
+            c2 = triangle_order[i].center
+            c2 = tuple(np.uint32((round(c2[0]), round(c2[1]))))
 
-            if i < len(triangle_order)-1:
-                c2 = self.triangles[i+1].center
-                c2 = tuple(np.uint32((round(c2[0]), round(c2[1]))))
-                cv.line(img, c1, c2, (255, 0, i * 7), 1, cv.LINE_AA, 0)
+            cv.line(img, c1, c2, (255, 0, i * 9), 1, cv.LINE_AA, 0)
+            cv.circle(img, c1, 2, (255, 0, i * 9), cv.FILLED, cv.LINE_AA)
+            c1 = c2
 
-            cv.circle(img, c1, 2, (255, 0, i * 7), cv.FILLED, cv.LINE_AA)
+    def plan_path(self, first_pose, dist_mat, triangles):
 
-    def sort(self, first_pose):
+        first_ind = self.locate_initial_pose(first_pose)
+        # dist_mat = self.dist_mat
+        # dict_vector = []
+        # for i in range(len(self.triangles)):
+        #     dist_vector = self.graph.dijkstra(i)
+        #     dist_mat.append(dist_vector.values())
+        #     dict_vector.append(dist_vector)
+        # print(dist_vector)
 
-        starting_point_ind = self.locate_initial_pose(first_pose)
-        dist_mat = []
-        dict_vector = []
-        for i in range(len(self.triangles)):
-            dist_vector = self.graph.dijkstra(i)
-            dist_mat.append(dist_vector.values())
-            dict_vector.append(dist_vector)
-            # print(dist_vector)
+        triangle_order = [triangles[first_ind]]
+        visited = [first_ind]
+        curr = first_ind
+        next_tri = None
+        num_of_tri = len(triangles)
 
-        triangle_order = [starting_point_ind]
-        curr = starting_point_ind
-        while len(dict_vector) is not len(triangle_order):
+        for i in range(num_of_tri - 1):
             min_d = np.inf
-            next = curr
-            for key, dist in dict_vector[curr].items():
-                if key is not curr and dist < min_d:
+            for key, dist in dist_mat[curr].items():
+                if key not in visited and dist < min_d:
                     min_d = dist
-                    next = key
-            triangle_order.append(next)
-            for key in dict_vector[curr].keys():
-                if key is not curr:
-                    if curr in dict_vector[key]:
-                        dict_vector[key].pop(curr)
-            curr = next
-        # print(dist_mat)
-        # print(triangle_order)
-        self.triangle_order = triangle_order
-        sorted_triangles = [None] * len(self.triangle_order)
-        j = 0
-        for i in self.triangle_order:
-            sorted_triangles[j] = self.triangles[i]
-            j += 1
+                    next_tri = key
+            visited.append(next_tri)
+            triangle_order.append(triangles[next_tri])
+            curr = next_tri
 
-        self.triangles = sorted_triangles
-        return self.triangles
+        # while len(dict_vector) is not len(triangle_order):
+        #     min_d = np.inf
+        #     next = curr
+        #     for key, dist in dict_vector[curr].items():
+        #         if key is not curr and dist < min_d:
+        #             min_d = dist
+        #             next = key
+        #     triangle_order.append(next)
+        #     for key in dict_vector[curr].keys():
+        #         if key is not curr:
+        #             if curr in dict_vector[key]:
+        #                 dict_vector[key].pop(curr)
+        #     curr = next
+        # # print(dist_mat)
+        # # print(triangle_order)
+        # self.triangle_order = triangle_order
+        # sorted_triangles = [None] * len(self.triangle_order)
+        # j = 0
+        # for i in self.triangle_order:
+        #     sorted_triangles[j] = self.triangles[i]
+        #     j += 1
+        #
+        # # self.triangles = sorted_triangles
+        return triangle_order
 
 
-class MoveBaseSeq():
-
-    def __init__(self):
-
-        rospy.init_node('move_base_sequence')
-        points_seq = rospy.get_param('move_base_seq/p_seq')
-        # Only yaw angle required (no ratotions around x and y axes) in deg:
-        yaweulerangles_seq = rospy.get_param('move_base_seq/yea_seq')
-        # List of goal quaternions:
-        quat_seq = list()
-        # List of goal poses:
-        self.pose_seq = list()
-        self.goal_cnt = 0
-        for yawangle in yaweulerangles_seq:
-            # Unpacking the quaternion list and passing it as arguments to Quaternion message constructor
-            quat_seq.append(Quaternion(*(quaternion_from_euler(0, 0, yawangle * math.pi / 180, axes='sxyz'))))
-        n = 3
-        # Returns a list of lists [[point1], [point2],...[pointn]]
-        points = [points_seq[i:i + n] for i in range(0, len(points_seq), n)]
-        for point in points:
-            # Exploit n variable to cycle in quat_seq
-            self.pose_seq.append(Pose(Point(*point), quat_seq[n - 3]))
-            n += 1
-        # Create action client
-        self.client = actionlib.SimpleActionClient('move_base', MoveBaseAction)
-        rospy.loginfo("Waiting for move_base action server...")
-        wait = self.client.wait_for_server(rospy.Duration(5.0))
-        if not wait:
-            rospy.logerr("Action server not available!")
-            rospy.signal_shutdown("Action server not available!")
-            return
-        rospy.loginfo("Connected to move base server")
-        rospy.loginfo("Starting goals achievements ...")
-        self.movebase_client()
-
-    def active_cb(self):
-        rospy.loginfo("Goal pose " + str(self.goal_cnt + 1) + " is now being processed by the Action Server...")
-
-    def feedback_cb(self, feedback):
-        # To print current pose at each feedback:
-        # rospy.loginfo("Feedback for goal "+str(self.goal_cnt)+": "+str(feedback))
-        rospy.loginfo("Feedback for goal pose " + str(self.goal_cnt + 1) + " received")
-
-    def done_cb(self, status, result):
-        self.goal_cnt += 1
-        # Reference for terminal status values: http://docs.ros.org/diamondback/api/actionlib_msgs/html/msg/GoalStatus.html
-        if status == 2:
-            rospy.loginfo("Goal pose " + str(
-                self.goal_cnt) + " received a cancel request after it started executing, completed execution!")
-
-        if status == 3:
-            rospy.loginfo("Goal pose " + str(self.goal_cnt) + " reached")
-            if self.goal_cnt < len(self.pose_seq):
-                next_goal = MoveBaseGoal()
-                next_goal.target_pose.header.frame_id = "map"
-                next_goal.target_pose.header.stamp = rospy.Time.now()
-                next_goal.target_pose.pose = self.pose_seq[self.goal_cnt]
-                rospy.loginfo("Sending goal pose " + str(self.goal_cnt + 1) + " to Action Server")
-                rospy.loginfo(str(self.pose_seq[self.goal_cnt]))
-                self.client.send_goal(next_goal, self.done_cb, self.active_cb, self.feedback_cb)
-            else:
-                rospy.loginfo("Final goal pose reached!")
-                rospy.signal_shutdown("Final goal pose reached!")
-                return
-
-        if status == 4:
-            rospy.loginfo("Goal pose " + str(self.goal_cnt) + " was aborted by the Action Server")
-            rospy.signal_shutdown("Goal pose " + str(self.goal_cnt) + " aborted, shutting down!")
-            return
-
-        if status == 5:
-            rospy.loginfo("Goal pose " + str(self.goal_cnt) + " has been rejected by the Action Server")
-            rospy.signal_shutdown("Goal pose " + str(self.goal_cnt) + " rejected, shutting down!")
-            return
-
-        if status == 8:
-            rospy.loginfo("Goal pose " + str(
-                self.goal_cnt) + " received a cancel request before it started executing, successfully cancelled!")
-
-    def movebase_client(self):
-        goal = MoveBaseGoal()
-        goal.target_pose.header.frame_id = "map"
-        goal.target_pose.header.stamp = rospy.Time.now()
-        goal.target_pose.pose = self.pose_seq[self.goal_cnt]
-        rospy.loginfo("Sending goal pose " + str(self.goal_cnt + 1) + " to Action Server")
-        rospy.loginfo(str(self.pose_seq[self.goal_cnt]))
-        self.client.send_goal(goal, self.done_cb, self.active_cb, self.feedback_cb)
-        rospy.spin()
+# class MoveBaseSeq():
+#
+#     def __init__(self):
+#
+#         rospy.init_node('move_base_sequence')
+#         points_seq = rospy.get_param('move_base_seq/p_seq')
+#         # Only yaw angle required (no ratotions around x and y axes) in deg:
+#         yaweulerangles_seq = rospy.get_param('move_base_seq/yea_seq')
+#         # List of goal quaternions:
+#         quat_seq = list()
+#         # List of goal poses:
+#         self.pose_seq = list()
+#         self.goal_cnt = 0
+#         for yawangle in yaweulerangles_seq:
+#             # Unpacking the quaternion list and passing it as arguments to Quaternion message constructor
+#             quat_seq.append(Quaternion(*(quaternion_from_euler(0, 0, yawangle * math.pi / 180, axes='sxyz'))))
+#         n = 3
+#         # Returns a list of lists [[point1], [point2],...[pointn]]
+#         points = [points_seq[i:i + n] for i in range(0, len(points_seq), n)]
+#         for point in points:
+#             # Exploit n variable to cycle in quat_seq
+#             self.pose_seq.append(Pose(Point(*point), quat_seq[n - 3]))
+#             n += 1
+#         # Create action client
+#         self.client = actionlib.SimpleActionClient('move_base', MoveBaseAction)
+#         rospy.loginfo("Waiting for move_base action server...")
+#         wait = self.client.wait_for_server(rospy.Duration(5.0))
+#         if not wait:
+#             rospy.logerr("Action server not available!")
+#             rospy.signal_shutdown("Action server not available!")
+#             return
+#         rospy.loginfo("Connected to move base server")
+#         rospy.loginfo("Starting goals achievements ...")
+#         self.movebase_client()
+#
+#     def active_cb(self):
+#         rospy.loginfo("Goal pose " + str(self.goal_cnt + 1) + " is now being processed by the Action Server...")
+#
+#     def feedback_cb(self, feedback):
+#         # To print current pose at each feedback:
+#         # rospy.loginfo("Feedback for goal "+str(self.goal_cnt)+": "+str(feedback))
+#         rospy.loginfo("Feedback for goal pose " + str(self.goal_cnt + 1) + " received")
+#
+#     def done_cb(self, status, result):
+#         self.goal_cnt += 1
+#         # Reference for terminal status values: http://docs.ros.org/diamondback/api/actionlib_msgs/html/msg/GoalStatus.html
+#         if status == 2:
+#             rospy.loginfo("Goal pose " + str(
+#                 self.goal_cnt) + " received a cancel request after it started executing, completed execution!")
+#
+#         if status == 3:
+#             rospy.loginfo("Goal pose " + str(self.goal_cnt) + " reached")
+#             if self.goal_cnt < len(self.pose_seq):
+#                 next_goal = MoveBaseGoal()
+#                 next_goal.target_pose.header.frame_id = "map"
+#                 next_goal.target_pose.header.stamp = rospy.Time.now()
+#                 next_goal.target_pose.pose = self.pose_seq[self.goal_cnt]
+#                 rospy.loginfo("Sending goal pose " + str(self.goal_cnt + 1) + " to Action Server")
+#                 rospy.loginfo(str(self.pose_seq[self.goal_cnt]))
+#                 self.client.send_goal(next_goal, self.done_cb, self.active_cb, self.feedback_cb)
+#             else:
+#                 rospy.loginfo("Final goal pose reached!")
+#                 rospy.signal_shutdown("Final goal pose reached!")
+#                 return
+#
+#         if status == 4:
+#             rospy.loginfo("Goal pose " + str(self.goal_cnt) + " was aborted by the Action Server")
+#             rospy.signal_shutdown("Goal pose " + str(self.goal_cnt) + " aborted, shutting down!")
+#             return
+#
+#         if status == 5:
+#             rospy.loginfo("Goal pose " + str(self.goal_cnt) + " has been rejected by the Action Server")
+#             rospy.signal_shutdown("Goal pose " + str(self.goal_cnt) + " rejected, shutting down!")
+#             return
+#
+#         if status == 8:
+#             rospy.loginfo("Goal pose " + str(
+#                 self.goal_cnt) + " received a cancel request before it started executing, successfully cancelled!")
+#
+#     def movebase_client(self):
+#         goal = MoveBaseGoal()
+#         goal.target_pose.header.frame_id = "map"
+#         goal.target_pose.header.stamp = rospy.Time.now()
+#         goal.target_pose.pose = self.pose_seq[self.goal_cnt]
+#         rospy.loginfo("Sending goal pose " + str(self.goal_cnt + 1) + " to Action Server")
+#         rospy.loginfo(str(self.pose_seq[self.goal_cnt]))
+#         self.client.send_goal(goal, self.done_cb, self.active_cb, self.feedback_cb)
+#         rospy.spin()
 
 
 class MapService(object):
@@ -321,7 +375,7 @@ class MapService(object):
         shape = self.map_data.info.height, self.map_data.info.width
         self.map_arr = np.array(self.map_data.data, dtype='float32').reshape(shape)
         self.resolution = self.map_data.info.resolution
-        res,map_binary = cv.threshold(self.map_arr, 90, 255, 0)
+        res, map_binary = cv.threshold(self.map_arr, 90, 255, 0)
         self.map_binary = np.uint8(map_binary)
         self.map_rgb = cv.cvtColor(self.map_binary, cv.COLOR_GRAY2BGR)
 
@@ -366,6 +420,16 @@ class Graph:
         self.edges = {}
         self.visited = []
 
+    def get_num_of_verices(self):
+        return len(self.edges)
+
+    def get_vertices(self):
+        return self.edges.keys()
+
+    def add_vertex(self, u):
+        if u not in self.edges:
+            self.edges[u] = []
+
     def add_edges(self, edges):
         for e in edges:
             self.add_edge(e[0], e[1], e[2])
@@ -404,9 +468,15 @@ class Graph:
 
         return D
 
+    def get_dist_mat(self):
+        num_of_tri = self.get_num_of_verices()
+        dist_dict = {}
+        for v in self.edges:
+            dist_dict[v] = self.dijkstra(v)
 
-        pos = np.array([self.initial_pose.position.x, self.initial_pose.position.y])
-        return self.position_to_map(pos)
+        # pos = np.array([self.initial_pose.position.x, self.initial_pose.position.y])
+        # return self.position_to_map(pos)
+        return dist_dict
 
 
 class CostMapUpdater:
@@ -472,6 +542,7 @@ def vacuum_cleaning(agent_id, agent_max_vel):
     print('cleaning (%d,%d)' % (x, y))
     result = multi_move_base.move(agent_id, x, y)
 
+
 def inspection(agent_id, agent_max_vel):
     print('start inspection')
 
@@ -482,33 +553,40 @@ if __name__ == '__main__':
     # Initializes a rospy node to let the SimpleActionClient publish and subscribe
     rospy.init_node('assignment3')
     # rospy.init_node('get_map_example', anonymous=True)
+
     ms = MapService()
     # rc_DWA_client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS/")
     # rc_DWA_client.update_configuration({"max_vel_x": 2.5})
     Triangle = namedtuple('Triangle', ['coordinates', 'center', 'area', 'edges'])
-    cb = CleaningBlocks(ms)
 
-    first_pose = ms.get_first_pose()
+    # first_pose = ms.get_first_pose()
     first_pose = PoseWithCovarianceStamped()
     first_pose.header.frame_id = "map"
     first_pose.header.stamp = rospy.Time.now()
-    first_pose.pose = self.pose_seq[self.goal_cnt]
-    cb.sort(first_pose)
+    first_pose.pose.pose.position.x = 1.0
+    # robot2?
+    # cb.sort(first_pose)
 
     exec_mode = sys.argv[1]
     print('exec_mode:' + exec_mode)
 
     agent_max_vel = 0.22
     if exec_mode == 'cleaning':
-	    agent_id = sys.argv[2]
-	    agent_max_vel = sys.argv[3]
+        agent_id = sys.argv[2]
+        agent_max_vel = sys.argv[3]
         vacuum_cleaning(agent_id, agent_max_vel)
 
     elif exec_mode == 'inspection':
-	    agent_id = sys.argv[2]
-	    agent_max_vel = sys.argv[3]
+        agent_id = sys.argv[2]
+        agent_max_vel = sys.argv[3]
+        if (agent_id == '0'):
+            cb = CleaningBlocks(ms)
+            path = cb.plan_path([first_pose.pose.pose.position.x, first_pose.pose.pose.position.y], cb.dist_mat,
+                                cb.triangles)
+            cb.draw_path(path)
+            cb.draw_triangles((0, 255, 0), cb.triangles)
+
         inspection(agent_id, agent_max_vel)
-	
     else:
         print("Code not found")
         raise NotImplementedError

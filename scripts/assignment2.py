@@ -969,9 +969,9 @@ if __name__ == '__main__':
     rospy.init_node('get_map_example', anonymous=True)
     reload(logging)
 
-    rc_DWA_client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS/")
-    rc_DWA_client.update_configuration({"max_vel_x": 2.5})
-    rc_DWA_client.update_configuration({"max_vel_trans": 2.5})
+    # rc_DWA_client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS/")
+    # rc_DWA_client.update_configuration({"max_vel_x": 2.5})
+    # rc_DWA_client.update_configuration({"max_vel_trans": 2.5})
 
     ms = MapService()
     # rc_DWA_client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS/")
