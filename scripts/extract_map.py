@@ -12,8 +12,11 @@ class MapService(object):
         """
         Class constructor
         """
-        rospy.wait_for_service('static_map')
-        static_map = rospy.ServiceProxy('static_map', GetMap)
+        print('wait for static_map')
+        ag = 0
+        rospy.wait_for_service('tb3_%d/static_map'%ag)
+        print('get static_map')
+        static_map = rospy.ServiceProxy('tb3_0/static_map', GetMap)
         self.map_data = static_map().map
         self.map_org = np.array([self.map_data.info.origin.position.x, self.map_data.info.origin.position.y])
         shape = self.map_data.info.height, self.map_data.info.width

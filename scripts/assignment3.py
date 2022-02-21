@@ -366,7 +366,9 @@ class MapService(object):
 
     def __init__(self):
         self.initial_pose = None
+        print('wait for static_map')
         rospy.wait_for_service('static_map')
+        print('get static_map')
         static_map = rospy.ServiceProxy('static_map', GetMap)
         rospy.Subscriber('/initialpose', PoseWithCovarianceStamped, self.init_pose)
 
@@ -579,8 +581,8 @@ if __name__ == '__main__':
     elif exec_mode == 'inspection':
         agent_id = sys.argv[2]
         agent_max_vel = sys.argv[3]
+        cb = CleaningBlocks(ms)
         if (agent_id == '0'):
-            cb = CleaningBlocks(ms)
             path = cb.plan_path([first_pose.pose.pose.position.x, first_pose.pose.pose.position.y], cb.dist_mat,
                                 cb.triangles)
             cb.draw_path(path)

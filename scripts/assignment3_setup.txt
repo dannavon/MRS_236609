@@ -8,6 +8,7 @@ cd ~/ws/
 source devel/setup.bash
 export TURTLEBOT3_MODEL=burger
 roslaunch MRS_236609 multi_turtlebot3_navigation.launch map_file:=$HOME/ws/src/MRS_236609/maps/closed_room.yaml
+
 ______________________________________________________________________
 
 cd ~/ws/
