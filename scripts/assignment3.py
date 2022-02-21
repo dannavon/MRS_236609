@@ -366,11 +366,10 @@ class MapService(object):
 
     def __init__(self):
         self.initial_pose = None
-        print('wait for static_map')
-        rospy.wait_for_service('static_map')
-        print('get static_map')
-        static_map = rospy.ServiceProxy('static_map', GetMap)
-        rospy.Subscriber('/initialpose', PoseWithCovarianceStamped, self.init_pose)
+        ag=0
+        rospy.wait_for_service('tb3_%d/static_map'%ag)
+        static_map = rospy.ServiceProxy('tb3_%d/static_map'%ag, GetMap)
+        rospy.Subscriber('tb3_%d/initialpose'%ag, PoseWithCovarianceStamped, self.init_pose)
 
         self.map_data = static_map().map
         self.map_org = np.array([self.map_data.info.origin.position.x, self.map_data.info.origin.position.y])
@@ -472,13 +471,13 @@ class Graph:
 
     def get_dist_mat(self):
         num_of_tri = self.get_num_of_verices()
-        dist_dict = {}
+        dist_mat = [None]*num_of_tri
         for v in self.edges:
-            dist_dict[v] = self.dijkstra(v)
+            dist_mat[v]=(self.dijkstra(v).values())
 
         # pos = np.array([self.initial_pose.position.x, self.initial_pose.position.y])
         # return self.position_to_map(pos)
-        return dist_dict
+        return dist_mat
 
 
 class CostMapUpdater:
@@ -582,7 +581,12 @@ if __name__ == '__main__':
         agent_id = sys.argv[2]
         agent_max_vel = sys.argv[3]
         cb = CleaningBlocks(ms)
-        if (agent_id == '0'):
+        dist_mat = np.array(cb.dist_mat)
+        extreme_nodes = np.where(np.max(dist_mat) == dist_mat)
+        # 1. assign nodes to each extreme node
+        # 2. plan path to each set
+        # 3. transmit the path to the other robot
+        if agent_id == '0':
             path = cb.plan_path([first_pose.pose.pose.position.x, first_pose.pose.pose.position.y], cb.dist_mat,
                                 cb.triangles)
             cb.draw_path(path)
