@@ -30,6 +30,52 @@ from collections import namedtuple
 from Queue import PriorityQueue
 
 
+def plan_path(first_ind, dist_mat, triangles):
+
+    # first_ind = self.locate_initial_pose(first_pose)
+
+    triangle_order = [triangles[first_ind]]
+    visited = [first_ind]
+    curr = first_ind
+    next_tri = None
+    num_of_tri = len(triangles)
+
+    for i in range(num_of_tri - 1):
+        min_d = np.inf
+        for key, dist in enumerate(dist_mat[curr]):
+            if key not in visited and dist < min_d:
+                min_d = dist
+                next_tri = key
+        visited.append(next_tri)
+        triangle_order.append(triangles[next_tri])
+        curr = next_tri
+
+    # while len(dict_vector) is not len(triangle_order):
+    #     min_d = np.inf
+    #     next = curr
+    #     for key, dist in dict_vector[curr].items():
+    #         if key is not curr and dist < min_d:
+    #             min_d = dist
+    #             next = key
+    #     triangle_order.append(next)
+    #     for key in dict_vector[curr].keys():
+    #         if key is not curr:
+    #             if curr in dict_vector[key]:
+    #                 dict_vector[key].pop(curr)
+    #     curr = next
+    # # print(dist_mat)
+    # # print(triangle_order)
+    # self.triangle_order = triangle_order
+    # sorted_triangles = [None] * len(self.triangle_order)
+    # j = 0
+    # for i in self.triangle_order:
+    #     sorted_triangles[j] = self.triangles[i]
+    #     j += 1
+    #
+    # # self.triangles = sorted_triangles
+    return triangle_order
+
+
 class CleaningBlocks:
 
     def __init__(self, ms):
@@ -219,58 +265,6 @@ class CleaningBlocks:
             cv.circle(img, c1, 2, (255, 0, i * 9), cv.FILLED, cv.LINE_AA)
             c1 = c2
 
-    def plan_path(self, first_pose, dist_mat, triangles):
-
-        first_ind = self.locate_initial_pose(first_pose)
-        # dist_mat = self.dist_mat
-        # dict_vector = []
-        # for i in range(len(self.triangles)):
-        #     dist_vector = self.graph.dijkstra(i)
-        #     dist_mat.append(dist_vector.values())
-        #     dict_vector.append(dist_vector)
-        # print(dist_vector)
-
-        triangle_order = [triangles[first_ind]]
-        visited = [first_ind]
-        curr = first_ind
-        next_tri = None
-        num_of_tri = len(triangles)
-
-        for i in range(num_of_tri - 1):
-            min_d = np.inf
-            for key, dist in dist_mat[curr].items():
-                if key not in visited and dist < min_d:
-                    min_d = dist
-                    next_tri = key
-            visited.append(next_tri)
-            triangle_order.append(triangles[next_tri])
-            curr = next_tri
-
-        # while len(dict_vector) is not len(triangle_order):
-        #     min_d = np.inf
-        #     next = curr
-        #     for key, dist in dict_vector[curr].items():
-        #         if key is not curr and dist < min_d:
-        #             min_d = dist
-        #             next = key
-        #     triangle_order.append(next)
-        #     for key in dict_vector[curr].keys():
-        #         if key is not curr:
-        #             if curr in dict_vector[key]:
-        #                 dict_vector[key].pop(curr)
-        #     curr = next
-        # # print(dist_mat)
-        # # print(triangle_order)
-        # self.triangle_order = triangle_order
-        # sorted_triangles = [None] * len(self.triangle_order)
-        # j = 0
-        # for i in self.triangle_order:
-        #     sorted_triangles[j] = self.triangles[i]
-        #     j += 1
-        #
-        # # self.triangles = sorted_triangles
-        return triangle_order
-
 
 # class MoveBaseSeq():
 #
@@ -364,12 +358,12 @@ class CleaningBlocks:
 
 class MapService(object):
 
-    def __init__(self):
+    def __init__(self, ag):
         self.initial_pose = None
-        ag=0
-        rospy.wait_for_service('tb3_%d/static_map'%ag)
-        static_map = rospy.ServiceProxy('tb3_%d/static_map'%ag, GetMap)
-        rospy.Subscriber('tb3_%d/initialpose'%ag, PoseWithCovarianceStamped, self.init_pose)
+
+        rospy.wait_for_service('tb3_%c/static_map'%ag)
+        static_map = rospy.ServiceProxy('tb3_%c/static_map'%ag, GetMap)
+        rospy.Subscriber('tb3_%c/initialpose'%ag, PoseWithCovarianceStamped, self.init_pose)
 
         self.map_data = static_map().map
         self.map_org = np.array([self.map_data.info.origin.position.x, self.map_data.info.origin.position.y])
@@ -481,11 +475,11 @@ class Graph:
 
 
 class CostMapUpdater:
-    def __init__(self):
+    def __init__(self, ag):
         self.cost_map = None
         self.shape = None
-        rospy.Subscriber('/move_base/global_costmap/costmap', OccupancyGrid, self.init_costmap_callback)
-        rospy.Subscriber('/move_base/global_costmap/costmap_updates', OccupancyGridUpdate, self.costmap_callback_update)
+        rospy.Subscriber('tb3_%d/move_base/global_costmap/costmap'%ag, OccupancyGrid, self.init_costmap_callback)
+        rospy.Subscriber('tb3_%d/move_base/global_costmap/costmap_updates'%ag, OccupancyGridUpdate, self.costmap_callback_update)
 
     def init_costmap_callback(self, msg):
         print('only once')  # For the student to understand
@@ -555,16 +549,10 @@ if __name__ == '__main__':
     rospy.init_node('assignment3')
     # rospy.init_node('get_map_example', anonymous=True)
 
-    ms = MapService()
     # rc_DWA_client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS/")
     # rc_DWA_client.update_configuration({"max_vel_x": 2.5})
     Triangle = namedtuple('Triangle', ['coordinates', 'center', 'area', 'edges'])
 
-    # first_pose = ms.get_first_pose()
-    first_pose = PoseWithCovarianceStamped()
-    first_pose.header.frame_id = "map"
-    first_pose.header.stamp = rospy.Time.now()
-    first_pose.pose.pose.position.x = 1.0
     # robot2?
     # cb.sort(first_pose)
 
@@ -572,25 +560,55 @@ if __name__ == '__main__':
     print('exec_mode:' + exec_mode)
 
     agent_max_vel = 0.22
+    agent_id = sys.argv[2]
+    agent_max_vel = sys.argv[3]
+
+    ms = MapService(agent_id)
+
     if exec_mode == 'cleaning':
-        agent_id = sys.argv[2]
-        agent_max_vel = sys.argv[3]
         vacuum_cleaning(agent_id, agent_max_vel)
 
     elif exec_mode == 'inspection':
-        agent_id = sys.argv[2]
-        agent_max_vel = sys.argv[3]
-        cb = CleaningBlocks(ms)
-        dist_mat = np.array(cb.dist_mat)
-        extreme_nodes = np.where(np.max(dist_mat) == dist_mat)
         # 1. assign nodes to each extreme node
         # 2. plan path to each set
         # 3. transmit the path to the other robot
+        # first_pose = ms.get_first_pose(agent_id)
         if agent_id == '0':
-            path = cb.plan_path([first_pose.pose.pose.position.x, first_pose.pose.pose.position.y], cb.dist_mat,
-                                cb.triangles)
-            cb.draw_path(path)
+            first_pose = PoseWithCovarianceStamped()
+            first_pose.header.frame_id = "map"
+            first_pose.header.stamp = rospy.Time.now()
+            first_pose.pose.pose.position.x = 0.0
+
+            cb = CleaningBlocks(ms)
+            dist_mat_np = np.array(cb.dist_mat)
+            extreme_nodes = np.squeeze(np.where(np.max(dist_mat_np) == dist_mat_np))
+            nodes_0 = []
+            nodes_1 = []
+            for i in range(len(cb.triangles)):
+                dist_0 = dist_mat_np[i][extreme_nodes[0]]
+                dist_1 = dist_mat_np[i][extreme_nodes[1]]
+                if dist_0 < dist_1:
+                    nodes_0.append(i)
+                else:
+                    nodes_1.append(i)
+
+            dist_mat_0 = dist_mat_np[nodes_0,:][:,nodes_0]
+            dist_mat_1 = dist_mat_np[nodes_1,:][:,nodes_1]
+            # how to slice list?
+            triangles_0 = cb.triangles[nodes_0]
+            triangles_1 = cb.triangles[nodes_1]
+
+
+            path0 = plan_path(extreme_nodes[0], dist_mat_0, triangles_0)
+            path1 = plan_path(extreme_nodes[1], dist_mat_1, triangles_1)
+            cb.draw_path(nodes_1)
             cb.draw_triangles((0, 255, 0), cb.triangles)
+        else:
+            first_pose = PoseWithCovarianceStamped()
+            first_pose.header.frame_id = "map"
+            first_pose.header.stamp = rospy.Time.now()
+            first_pose.pose.pose.position.x = 1.0
+
 
         inspection(agent_id, agent_max_vel)
     else:
