@@ -2,8 +2,6 @@
 
 import os
 import glob
-from threading import Timer, Thread, Event
-
 import rospy
 import tf
 import actionlib
@@ -16,8 +14,6 @@ import pickle
 # import dynamic_reconfigure.client
 import copy
 import cv2 as cv
-import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from scipy.spatial.transform import Rotation as R
@@ -30,7 +26,6 @@ from geometry_msgs.msg import PoseWithCovarianceStamped, Quaternion
 from nav_msgs.srv import GetMap
 from nav_msgs.msg import OccupancyGrid, Odometry
 from map_msgs.msg import OccupancyGridUpdate
-from std_msgs.msg import String
 from collections import namedtuple
 from Queue import PriorityQueue
 
@@ -57,110 +52,54 @@ def distance(a,b):
 def is_same_edge(e1, e2):
     return (e1[0] == e2[0] and e1[1] == e2[1]) or (e1[0] == e2[1] and e1[1] == e2[0])
 
-def plan_path(first_ind, dist_mat, triangles):
-    triangle_order = [triangles[first_ind]]
-    visited = [first_ind]
-    curr = first_ind
-    next_tri = None
-    num_of_tri = len(triangles)
-
-    for i in range(num_of_tri - 1):
-        min_d = np.inf
-        for key, dist in enumerate(dist_mat[curr]):
-            if key not in visited and dist < min_d:
-                min_d = dist
-                next_tri = key
-        visited.append(next_tri)
-        triangle_order.append(triangles[next_tri])
-        curr = next_tri
-
-    # while len(dict_vector) is not len(triangle_order):
-    #     min_d = np.inf
-    #     next = curr
-    #     for key, dist in dict_vector[curr].items():
-    #         if key is not curr and dist < min_d:
-    #             min_d = dist
-    #             next = key
-    #     triangle_order.append(next)
-    #     for key in dict_vector[curr].keys():
-    #         if key is not curr:
-    #             if curr in dict_vector[key]:
-    #                 dict_vector[key].pop(curr)
-    #     curr = next
-    # # print(dist_mat)
-    # # print(triangle_order)
-    # self.triangle_order = triangle_order
-    # sorted_triangles = [None] * len(self.triangle_order)
-    # j = 0
-    # for i in self.triangle_order:
-    #     sorted_triangles[j] = self.triangles[i]
-    #     j += 1
-    #
-    # # self.triangles = sorted_triangles
-    return triangle_order
 
 class CleaningBlocks:
 
-    def __init__(self, ms):
-        self.sub_div = None
-        self.corners = None
+    def __init__(self, occ_map):
         self.triangles = []
-        # self.triangle_order = []
-        self.occ_map = ms.map_arr
-        self.map_size = ms.map_arr.shape
+        self.triangle_order = []
+        self.occ_map = occ_map
+        self.map_size = occ_map.shape
         self.rect = (0, 0, self.map_size[1], self.map_size[0])
         self.graph = Graph()
 
         # find corners
-        self.map_rgb = ms.map_rgb
-        # map_img_th = thresh.copy()
-
-        # find triangles
-        self.find_corners()
-        # Filter triangles outside the polygon
-        self.extract_triangles()
-
-        self.dist_mat = self.graph.get_dist_mat()
-
-    def find_corners(self):
-        # im2, contours, hierarchy = cv.findContours(map_img_th, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
-        # cv.drawContours(map_img_th, contours, -1, (255, 255, 255), 3)
-
-        ret, thresh = cv.threshold(self.occ_map, 90, 255, 0)
+        ret, thresh = cv.threshold(occ_map, 90, 255, 0)
         thresh = np.uint8(thresh)
         self.map_rgb = cv.cvtColor(thresh, cv.COLOR_GRAY2BGR)
+        # map_img_th = thresh.copy()
+        # im2, contours, hierarchy = cv.findContours(map_img_th, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+        # cv.drawContours(map_img_th, contours, -1, (255, 255, 255), 3)
+        # corners = cv.goodFeaturesToTrack(thresh, 25, 0.01, 10)
         corners = cv.goodFeaturesToTrack(thresh, maxCorners=30, qualityLevel=0.16, minDistance=3, blockSize=6, useHarrisDetector=False)
-        # corners = cv.goodFeaturesToTrack(ms.map_binary, 20, 0.01, 10)
         self.corners = np.int0(corners)
 
+        # find triangles
         # Create an instance of Subdiv2D
         self.sub_div = cv.Subdiv2D(self.rect)
         # Insert points into sub_div
         self.sub_div.insert(corners)
+        # Filter triangles outside the polygon
+        self.extract_triangles()
 
     def extract_triangles(self):
         initial_triangles = self.sub_div.getTriangleList()
 
         r = self.rect
+        filtered_triangles = []
         for t in initial_triangles:
-
             pt1 = (t[0], t[1])
             pt2 = (t[2], t[3])
             pt3 = (t[4], t[5])
-            delaunay_color = (255, 0, 0)
-            img = self.map_rgb
-
+            mid1 = (np.uint32((t[1] + t[3]) / 2), np.uint32((t[0] + t[2]) / 2))
+            mid2 = (np.uint32((t[3] + t[5]) / 2), np.uint32((t[2] + t[4]) / 2))
+            mid3 = (np.uint32((t[1] + t[5]) / 2), np.uint32((t[0] + t[4]) / 2))
             if rect_contains(r, pt1) and rect_contains(r, pt2) and rect_contains(r, pt3):
-                center = (np.round((t[0] + t[2] + t[4]) / 3), np.round((t[1] + t[3] + t[5]) / 3))
+                center = (np.round((t[0] + t[2] + t[4]) / 3),np.round((t[1] + t[3] + t[5]) / 3))
                 center2 = (np.uint32(np.round((t[1] + t[3] + t[5]) / 3)), np.uint32(np.round((t[0] + t[2] + t[4]) / 3)))
-                # cv.line(img, pt2, pt3, delaunay_color, 1, cv.LINE_AA, 0)
-                # cv.line(img, pt3, pt1, delaunay_color, 1, cv.LINE_AA, 0)
-                # cv.line(img, pt1, pt2, delaunay_color, 1, cv.LINE_AA, 0)
-                mid1 = (np.uint32((t[1] + t[3]) / 2), np.uint32((t[0] + t[2]) / 2))
-                mid2 = (np.uint32((t[3] + t[5]) / 2), np.uint32((t[2] + t[4]) / 2))
-                mid3 = (np.uint32((t[1] + t[5]) / 2), np.uint32((t[0] + t[4]) / 2))
-                if self.point_in_room(center2) and (self.line_in_room(mid1) and self.line_in_room(mid2) and
-                                                    self.line_in_room(mid3)):
+
+                if self.point_in_room(center2):
+                # if self.line_in_room(mid1) and self.line_in_room(mid2) and self.line_in_room(mid3):
                     mat = np.array([[t[0], t[1], 1], [t[2], t[3], 1], [t[4], t[5], 1]])
                     area = np.linalg.det(mat) / 2
 
@@ -168,59 +107,21 @@ class CleaningBlocks:
                                  [pt2, pt3, distance(pt2, pt3)]]
                     # center_edges = [[pt1, center, distance(pt1, center)], [pt1, center, distance(pt1, center)],
                     #                 [pt2, center, distance(pt2, center)]]
-                    new_triangle = Triangle(t, center, area, tri_edges)
-                    self.triangles.append(new_triangle)
-                    last_tri_ind = len(self.triangles) - 1
+                    self.triangles.append(Triangle(t, center, area, tri_edges))
+                    last_tri_ind = len(self.triangles)-1
                     self.add_adjacent_tri_edge(last_tri_ind)
-        # cv.imshow('delaunay', img)
-        # cv.waitKey(0)
 
-    def line_in_room(self, mid_p_i):
-
-        map = self.occ_map
-
-        if map[mid_p_i] != -1:  # mid pixel
-            return True
-
-        size = map.shape
-        if mid_p_i[0] > 0:
-            if map[(mid_p_i[0] - 1, mid_p_i[1])] != -1:  # left pixel
-                return True
-            if mid_p_i[1] > 0:  # left up pixel
-                if map[(mid_p_i[0] - 1, mid_p_i[1] - 1)] != -1:
-                    return True
-            if mid_p_i[1] < size[0] - 1:  # left down pixel
-                if map[(mid_p_i[0] - 1, mid_p_i[1] + 1)] != -1:
-                    return True
-
-        if mid_p_i[0] < size[1] - 1:
-            if map[(mid_p_i[0] + 1, mid_p_i[1])] != -1:  # right pixel
-                return True
-            if mid_p_i[1] > 0:  # left up pixel
-                if map[(mid_p_i[0] + 1, mid_p_i[1] - 1)] != -1:
-                    return True
-            if mid_p_i[1] < size[0] - 1:  # left down pixel
-                if map[(mid_p_i[0] + 1, mid_p_i[1] + 1)] != -1:
-                    return True
-
-        if mid_p_i[1] > 0 and \
-                map[(mid_p_i[0], mid_p_i[1] - 1)] != -1:  # up pixel
-            return True
-
-        if mid_p_i[1] < size[0] - 1 and \
-                map[(mid_p_i[0], mid_p_i[1] + 1)] != -1:  # down pixel
-            return True
-
-        return False
+    def get_triangles(self):
+        return self.triangles
 
     # Draw delaunay triangles
-    def draw_triangles(self, delaunay_color, triangles):
+    def draw_triangles(self, delaunay_color):
         img = self.map_rgb
         # Draw points
         for p in self.corners:
             draw_point(img, p[0], (0, 0, 255))
 
-        for triangle in triangles:
+        for triangle in self.triangles:
             t = triangle.coordinates
             pt1 = (t[0], t[1])
             pt2 = (t[2], t[3])
@@ -236,12 +137,12 @@ class CleaningBlocks:
         cv.waitKey(0)
         # cv.imwrite('delaunay.jpg', img)
 
-    def point_in_room(self, mid_p_i):
+    def point_in_room(self, mid_p_i): #Funny - tried to check lines
         map = self.occ_map
-
         if map[mid_p_i] != -1:  # mid pixel
             return True
         return False
+
 
     def add_adjacent_tri_edge(self, last_tri_ind):
         for i in range(last_tri_ind):
@@ -250,7 +151,7 @@ class CleaningBlocks:
                 b = self.triangles[last_tri_ind].center
                 self.graph.add_edge(i, last_tri_ind, distance(a, b))
 
-    def is_neighbor(self, v_i, u_i):
+    def is_neighbor(self, v_i, u_i): #Funny
         v_cor = self.triangles[v_i].coordinates
         u_cor = self.triangles[u_i].coordinates
         v_edges = self.triangles[v_i].edges
@@ -280,247 +181,55 @@ class CleaningBlocks:
                 ind = i
         return ind
 
-    def draw_path(self, triangle_order):
+    def draw_triangle_order(self):
         img = self.map_rgb
-        c1 = triangle_order[0].center
-        c1 = tuple(np.uint32((round(c1[0]), round(c1[1]))))
-        for i in range(1, len(triangle_order)):
-            c2 = triangle_order[i].center
-            c2 = tuple(np.uint32((round(c2[0]), round(c2[1]))))
+        triangle_order=self.triangle_order
+        for (i, tri) in enumerate(self.triangles):
+            c1 = tri.center
+            c1 = tuple(np.uint32((round(c1[0]), round(c1[1]))))
 
-            cv.line(img, c1, c2, (255, 0, i * 9), 1, cv.LINE_AA, 0)
-            cv.circle(img, c1, 2, (255, 0, i * 9), cv.FILLED, cv.LINE_AA)
-            c1 = c2
+            if i < len(triangle_order)-1:
+                c2 = self.triangles[i+1].center
+                c2 = tuple(np.uint32((round(c2[0]), round(c2[1]))))
+                cv.line(img, c1, c2, (255, 0, i * 7), 1, cv.LINE_AA, 0)
 
-    # def plan_path(self, first_pose, dist_mat, triangles):
-    #
-    #     first_ind = self.locate_initial_pose(first_pose)
-    #     # dist_mat = self.dist_mat
-    #     # dict_vector = []
-    #     # for i in range(len(self.triangles)):
-    #     #     dist_vector = self.graph.dijkstra(i)
-    #     #     dist_mat.append(dist_vector.values())
-    #     #     dict_vector.append(dist_vector)
-    #     # print(dist_vector)
-    #
-    #     triangle_order = [triangles[first_ind]]
-    #     visited = [first_ind]
-    #     curr = first_ind
-    #     next_tri = None
-    #     num_of_tri = len(triangles)
-    #
-    #     for i in range(num_of_tri - 1):
-    #         min_d = np.inf
-    #         for key, dist in dist_mat[curr].items():
-    #             if key not in visited and dist < min_d:
-    #                 min_d = dist
-    #                 next_tri = key
-    #         visited.append(next_tri)
-    #         triangle_order.append(triangles[next_tri])
-    #         curr = next_tri
-    #
-    #     # while len(dict_vector) is not len(triangle_order):
-    #     #     min_d = np.inf
-    #     #     next = curr
-    #     #     for key, dist in dict_vector[curr].items():
-    #     #         if key is not curr and dist < min_d:
-    #     #             min_d = dist
-    #     #             next = key
-    #     #     triangle_order.append(next)
-    #     #     for key in dict_vector[curr].keys():
-    #     #         if key is not curr:
-    #     #             if curr in dict_vector[key]:
-    #     #                 dict_vector[key].pop(curr)
-    #     #     curr = next
-    #     # # print(dist_mat)
-    #     # # print(triangle_order)
-    #     # self.triangle_order = triangle_order
-    #     # sorted_triangles = [None] * len(self.triangle_order)
-    #     # j = 0
-    #     # for i in self.triangle_order:
-    #     #     sorted_triangles[j] = self.triangles[i]
-    #     #     j += 1
-    #     #
-    #     # # self.triangles = sorted_triangles
-    #     return triangle_order
+            cv.circle(img, c1, 2, (255, 0, i * 7), cv.FILLED, cv.LINE_AA)
 
-# class CleaningBlocks:
-#
-#     def __init__(self, occ_map):
-#         self.triangles = []
-#         self.triangle_order = []
-#         self.occ_map = occ_map
-#         self.map_size = occ_map.shape
-#         self.rect = (0, 0, self.map_size[1], self.map_size[0])
-#         self.graph = Graph()
-#
-#         # find corners
-#         ret, thresh = cv.threshold(occ_map, 90, 255, 0)
-#         thresh = np.uint8(thresh)
-#         self.map_rgb = cv.cvtColor(thresh, cv.COLOR_GRAY2BGR)
-#         # map_img_th = thresh.copy()
-#         # im2, contours, hierarchy = cv.findContours(map_img_th, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
-#         # cv.drawContours(map_img_th, contours, -1, (255, 255, 255), 3)
-#         # corners = cv.goodFeaturesToTrack(thresh, 25, 0.01, 10)
-#         corners = cv.goodFeaturesToTrack(thresh, maxCorners=30, qualityLevel=0.16, minDistance=3, blockSize=6, useHarrisDetector=False)
-#         self.corners = np.int0(corners)
-#
-#         # find triangles
-#         # Create an instance of Subdiv2D
-#         self.sub_div = cv.Subdiv2D(self.rect)
-#         # Insert points into sub_div
-#         self.sub_div.insert(corners)
-#         # Filter triangles outside the polygon
-#         self.extract_triangles()
-#
-#     def extract_triangles(self):
-#         initial_triangles = self.sub_div.getTriangleList()
-#
-#         r = self.rect
-#         filtered_triangles = []
-#         for t in initial_triangles:
-#             pt1 = (t[0], t[1])
-#             pt2 = (t[2], t[3])
-#             pt3 = (t[4], t[5])
-#             mid1 = (np.uint32((t[1] + t[3]) / 2), np.uint32((t[0] + t[2]) / 2))
-#             mid2 = (np.uint32((t[3] + t[5]) / 2), np.uint32((t[2] + t[4]) / 2))
-#             mid3 = (np.uint32((t[1] + t[5]) / 2), np.uint32((t[0] + t[4]) / 2))
-#             if rect_contains(r, pt1) and rect_contains(r, pt2) and rect_contains(r, pt3):
-#                 center = (np.round((t[0] + t[2] + t[4]) / 3),np.round((t[1] + t[3] + t[5]) / 3))
-#                 center2 = (np.uint32(np.round((t[1] + t[3] + t[5]) / 3)), np.uint32(np.round((t[0] + t[2] + t[4]) / 3)))
-#
-#                 if self.point_in_room(center2):
-#                 # if self.line_in_room(mid1) and self.line_in_room(mid2) and self.line_in_room(mid3):
-#                     mat = np.array([[t[0], t[1], 1], [t[2], t[3], 1], [t[4], t[5], 1]])
-#                     area = np.linalg.det(mat) / 2
-#
-#                     tri_edges = [[pt1, pt2, distance(pt1, pt2)], [pt1, pt3, distance(pt1, pt3)],
-#                                  [pt2, pt3, distance(pt2, pt3)]]
-#                     # center_edges = [[pt1, center, distance(pt1, center)], [pt1, center, distance(pt1, center)],
-#                     #                 [pt2, center, distance(pt2, center)]]
-#                     self.triangles.append(Triangle(t, center, area, tri_edges))
-#                     last_tri_ind = len(self.triangles)-1
-#                     self.add_adjacent_tri_edge(last_tri_ind)
-#
-#     def get_triangles(self):
-#         return self.triangles
-#
-#     # Draw delaunay triangles
-#     def draw_triangles(self, delaunay_color):
-#         img = self.map_rgb
-#         # Draw points
-#         for p in self.corners:
-#             draw_point(img, p[0], (0, 0, 255))
-#
-#         for triangle in self.triangles:
-#             t = triangle.coordinates
-#             pt1 = (t[0], t[1])
-#             pt2 = (t[2], t[3])
-#             pt3 = (t[4], t[5])
-#             cv.line(img, pt2, pt3, delaunay_color, 1, cv.LINE_AA, 0)
-#             cv.line(img, pt3, pt1, delaunay_color, 1, cv.LINE_AA, 0)
-#             cv.line(img, pt1, pt2, delaunay_color, 1, cv.LINE_AA, 0)
-#             # cv.imshow('delaunay', img)
-#             # cv.waitKey(0)
-#
-#         # Show results
-#         cv.imshow('delaunay', img)
-#         cv.waitKey(0)
-#         # cv.imwrite('delaunay.jpg', img)
-#
-#     def point_in_room(self, mid_p_i): #Funny - tried to check lines
-#         map = self.occ_map
-#         if map[mid_p_i] != -1:  # mid pixel
-#             return True
-#         return False
-#
-#
-#     def add_adjacent_tri_edge(self, last_tri_ind):
-#         for i in range(last_tri_ind):
-#             if self.is_neighbor(i, last_tri_ind):
-#                 a = self.triangles[i].center
-#                 b = self.triangles[last_tri_ind].center
-#                 self.graph.add_edge(i, last_tri_ind, distance(a, b))
-#
-#     def is_neighbor(self, v_i, u_i): #Funny
-#         v_cor = self.triangles[v_i].coordinates
-#         u_cor = self.triangles[u_i].coordinates
-#         v_edges = self.triangles[v_i].edges
-#         u_edges = self.triangles[u_i].edges
-#         # indices = range(0, 6, 2)
-#         # for i in indices:
-#         #     for j in indices:
-#         #         if v_cor[i] == u_cor[j]:
-#         #             if v_cor[i+1] == u_cor[j+1]:
-#         #                 return True
-#         for e1 in v_edges:
-#             for e2 in u_edges:
-#                 if is_same_edge(e1, e2):
-#                     return True
-#         return False
-#
-#     def locate_initial_pose(self, first_pose):
-#         min_dist = 1000
-#         ind = 0
-#         x = first_pose[0]
-#         y = first_pose[1]
-#         for (i, triangle) in enumerate(self.triangles):
-#             c = triangle.center
-#             dist = distance(c, first_pose)
-#             if dist < min_dist:
-#                 min_dist = dist
-#                 ind = i
-#         return ind
-#
-#     def draw_triangle_order(self):
-#         img = self.map_rgb
-#         triangle_order=self.triangle_order
-#         for (i, tri) in enumerate(self.triangles):
-#             c1 = tri.center
-#             c1 = tuple(np.uint32((round(c1[0]), round(c1[1]))))
-#
-#             if i < len(triangle_order)-1:
-#                 c2 = self.triangles[i+1].center
-#                 c2 = tuple(np.uint32((round(c2[0]), round(c2[1]))))
-#                 cv.line(img, c1, c2, (255, 0, i * 7), 1, cv.LINE_AA, 0)
-#
-#             cv.circle(img, c1, 2, (255, 0, i * 7), cv.FILLED, cv.LINE_AA)
-#
-#     def sort(self, first_pose):
-#         starting_point_ind = self.locate_initial_pose(first_pose)
-#         dist_mat = []
-#         dict_vector = []
-#         for i in range(len(self.triangles)):
-#             dist_vector = self.graph.dijkstra(i)
-#             dist_mat.append(dist_vector.values())
-#             dict_vector.append(dist_vector)
-#             # print(dist_vector)
-#
-#         triangle_order = [starting_point_ind]
-#         curr = starting_point_ind
-#         while len(dict_vector) is not len(triangle_order):
-#             min_d = np.inf
-#             next = curr
-#             for key, dist in dict_vector[curr].items():
-#                 if key is not curr and dist < min_d:
-#                     min_d = dist
-#                     next = key
-#             triangle_order.append(next)
-#             for key in dict_vector[curr].keys():
-#                 if key is not curr:
-#                     dict_vector[key].pop(curr)
-#             curr = next
-#         # print(dist_mat)
-#         # print(triangle_order)
-#         self.triangle_order = triangle_order
-#         sorted_triangles = [None] * len(self.triangle_order)
-#         j = 0
-#         for i in self.triangle_order:
-#             sorted_triangles[j] = self.triangles[i]
-#             j += 1
-#
-#         self.triangles = sorted_triangles
-#         return self.triangles
+    def sort(self, first_pose):
+        starting_point_ind = self.locate_initial_pose(first_pose)
+        dist_mat = []
+        dict_vector = []
+        for i in range(len(self.triangles)):
+            dist_vector = self.graph.dijkstra(i)
+            dist_mat.append(dist_vector.values())
+            dict_vector.append(dist_vector)
+            # print(dist_vector)
+
+        triangle_order = [starting_point_ind]
+        curr = starting_point_ind
+        while len(dict_vector) is not len(triangle_order):
+            min_d = np.inf
+            next = curr
+            for key, dist in dict_vector[curr].items():
+                if key is not curr and dist < min_d:
+                    min_d = dist
+                    next = key
+            triangle_order.append(next)
+            for key in dict_vector[curr].keys():
+                if key is not curr:
+                    dict_vector[key].pop(curr)
+            curr = next
+        # print(dist_mat)
+        # print(triangle_order)
+        self.triangle_order = triangle_order
+        sorted_triangles = [None] * len(self.triangle_order)
+        j = 0
+        for i in self.triangle_order:
+            sorted_triangles[j] = self.triangles[i]
+            j += 1
+
+        self.triangles = sorted_triangles
+        return self.triangles
 
 class CostMapUpdater:
 
@@ -550,12 +259,9 @@ class CostMapUpdater:
 
 class MapService(object):
 
-    def __init__(self, ag):
+    def __init__(self):
         self.initial_pose     = None
         self.initial_pose_map = None
-        # rospy.wait_for_service('tb3_%c/static_map'%ag)
-        # static_map = rospy.ServiceProxy('tb3_%c/static_map'%ag, GetMap)
-        # rospy.Subscriber('tb3_%c/initialpose'%ag, PoseWithCovarianceStamped, self.init_pose)
         rospy.wait_for_service('static_map')
         static_map = rospy.ServiceProxy('static_map', GetMap)
         rospy.Subscriber('/initialpose', PoseWithCovarianceStamped, self.init_pose)
@@ -565,9 +271,6 @@ class MapService(object):
         shape = self.map_data.info.height, self.map_data.info.width
         self.map_arr = np.array(self.map_data.data, dtype='float32').reshape(shape)
         self.resolution = self.map_data.info.resolution
-        res, map_binary = cv.threshold(self.map_arr, 90, 255, 0)
-        self.map_binary = np.uint8(map_binary)
-        self.map_rgb = cv.cvtColor(self.map_binary, cv.COLOR_GRAY2BGR)
 
     def show_map(self, point=None):
         plt.imshow(self.map_arr)
@@ -584,9 +287,9 @@ class MapService(object):
     def init_pose(self, msg):
         self.initial_pose     = msg.pose.pose
         self.initial_pose_map = self.position_to_map(np.array((self.initial_pose.position.x, self.initial_pose.position.y)))
-        # print("initial pose is")
-        # print("X=" + str(self.initial_pose_map[0]))
-        # print("y=" + str(self.initial_pose_map[1]))
+        print("initial pose is")
+        print("X=" + str(self.initial_pose_map[0]))
+        print("y=" + str(self.initial_pose_map[1]))
 
     def get_first_pose(self):
         # Waits for YOU to set the initial_pose
@@ -608,16 +311,6 @@ class Graph:
         self.edges = {}
         self.visited = []
 
-    def get_num_of_verices(self):
-        return len(self.edges)
-
-    def get_vertices(self):
-        return self.edges.keys()
-
-    def add_vertex(self, u):
-        if u not in self.edges:
-            self.edges[u] = []
-
     def add_edges(self, edges):
         for e in edges:
             self.add_edge(e[0], e[1], e[2])
@@ -635,79 +328,25 @@ class Graph:
 
     def dijkstra(self, start_vertex):
         num_vertices = len(self.edges)
-        D = {v: float('inf') for v in self.edges.keys()}
+        D = {v: float('inf') for v in range(num_vertices)}
         D[start_vertex] = 0
 
         pq = PriorityQueue()
         pq.put((0, start_vertex))
-        visited = []
+
         while not pq.empty():
             (dist, current_vertex) = pq.get()
-            visited.append(current_vertex)
+            self.visited.append(current_vertex)
 
             for neighbor, dist in self.edges[current_vertex]:
-                if neighbor in self.edges:
-                    if neighbor not in visited:
-                        old_cost = D[neighbor]
-                        new_cost = D[current_vertex] + dist
-                        if new_cost < old_cost:
-                            pq.put((new_cost, neighbor))
-                            D[neighbor] = new_cost
-
+                if neighbor not in self.visited:
+                    old_cost = D[neighbor]
+                    new_cost = D[current_vertex] + dist
+                    if new_cost < old_cost:
+                        pq.put((new_cost, neighbor))
+                        D[neighbor] = new_cost
+        self.visited = []
         return D
-
-    def get_dist_mat(self):
-        num_of_tri = self.get_num_of_verices()
-        dist_mat = [None]*num_of_tri
-        for v in self.edges:
-            dist_mat[v]=(self.dijkstra(v).values())
-
-        # pos = np.array([self.initial_pose.position.x, self.initial_pose.position.y])
-        # return self.position_to_map(pos)
-        return dist_mat
-
-# # Based on https://stackabuse.com/dijkstras-algorithm-in-python/
-# class Graph:
-#     def __init__(self):
-#         self.edges = {}
-#         self.visited = []
-#
-#     def add_edges(self, edges):
-#         for e in edges:
-#             self.add_edge(e[0], e[1], e[2])
-#
-#     def add_edge(self, u, v, weight):
-#         if u in self.edges:
-#             self.edges[u].append((v, weight))
-#         else:
-#             self.edges[u] = [(v, weight)]
-#
-#         if v in self.edges:
-#             self.edges[v].append((u, weight))
-#         else:
-#             self.edges[v] = [(u, weight)]
-#
-#     def dijkstra(self, start_vertex):
-#         num_vertices = len(self.edges)
-#         D = {v: float('inf') for v in range(num_vertices)}
-#         D[start_vertex] = 0
-#
-#         pq = PriorityQueue()
-#         pq.put((0, start_vertex))
-#
-#         while not pq.empty():
-#             (dist, current_vertex) = pq.get()
-#             self.visited.append(current_vertex)
-#
-#             for neighbor, dist in self.edges[current_vertex]:
-#                 if neighbor not in self.visited:
-#                     old_cost = D[neighbor]
-#                     new_cost = D[current_vertex] + dist
-#                     if new_cost < old_cost:
-#                         pq.put((new_cost, neighbor))
-#                         D[neighbor] = new_cost
-#         self.visited = []
-#         return D
 
 
 class Path_finder:
@@ -1086,12 +725,9 @@ def move_robot_on_path_cleaning(map_service, path):
 def vacuum_cleaning(ms, robot_width, error_gap):
     print('start vacuum_cleaning')
 
-    cb                      = CleaningBlocks(ms)
-    # cb                      = CleaningBlocks(occ_map)
+    cb                      = CleaningBlocks(ms.map_arr)
     first_pose, first_angle = ms.get_first_pose()
-    # triangle_list           = cb.sort(first_pose)
-    first_ind               = cb.locate_initial_pose(first_pose)
-    triangle_list           = plan_path(first_ind, cb.dist_mat, cb.triangles)
+    triangle_list           = cb.sort(first_pose)
 
     # Draw delaunay triangles
     # cb.draw_triangle_order()
@@ -1120,6 +756,8 @@ def vacuum_cleaning(ms, robot_width, error_gap):
 
 path_folder_name                                 = "paths"
 suspicious_points_map_folder_name                = "suspicious_points_maps"
+suspicious_coorinations_map_folder_name          = "suspicious_coorinations_maps"
+suspicious_coorinations_map_filtered_folder_name = "suspicious_coorinations_map_filtereds"
 found_circles_maps_folder_name                   = "found_circles_maps"
 differences_maps_folder_name                     = "differences_maps"
 differences_maps_process_folder_name             = "differences_maps_process"
@@ -1159,18 +797,12 @@ class InspectionCostmapUpdater:
     def update_index_in_path(self, index):
         self.current_index_in_path = index
 
-    def calculate_differences_map(self):
-        cost_map_ = np.where(self.cost_map < 85, 0, self.cost_map)  # self.cost_map < 90
-        self.cost_map_binary = self.map_to_binary_map(map=cost_map_)
-        self.differences_map = self.cost_map_binary - self.occ_map_binary_dilation
-        self.differences_map = np.where(self.differences_map < 0.0, 0.0, self.differences_map)
-        self.differences_map = self.binary_dilation(map=self.differences_map, iterations1=3, iterations2=2)
-
     def get_suspicious_points(self, plot=False, save_plot_to_file=False):
         global suspicious_points_map_folder_name
+        global suspicious_coorinations_map_folder_name
+        global suspicious_coorinations_map_filtered_folder_name
         global current_maps_index
         result = []
-        self.calculate_differences_map()
         if self.differences_map is not None:
             suspicious_points_map = np.zeros(shape=self.differences_map.shape)
             height                = self.differences_map.shape[0]
@@ -1187,9 +819,16 @@ class InspectionCostmapUpdater:
                                 sum += self.differences_map[i_ + k][j_ + l]
                     suspicious_points_map[i][j] = sum
 
-            max_filter_map = None
+            suspicious_coorinations_map = None
             if plot or save_plot_to_file:
-                max_filter_map = np.zeros(shape=suspicious_points_map.shape)
+                plt.imshow(suspicious_points_map)
+                plt.title('suspicious_points_map stride:' + str(self.sparsity))
+                if save_plot_to_file:
+                    plt.savefig(os.path.join(suspicious_points_map_folder_name, str(current_maps_index) + ".png"))
+                if plot:
+                    plt.show()
+                plt.clf()
+                suspicious_coorinations_map = np.zeros(shape=suspicious_points_map.shape)
 
             suspicious_coorinations = []
             height_filters          = int(suspicious_points_map.shape[0] / self.spheres_filter_size)
@@ -1208,10 +847,17 @@ class InspectionCostmapUpdater:
                                 current_max_x, current_max_y = j_ + l, i_ + k
                     if 0.0 < current_max:
                         suspicious_coorinations.append(((current_max_y, current_max_x, 0.0), current_max))
-                        if plot or save_plot_to_file:
-                            for k in range(3):
-                                for l in range(3):
-                                    max_filter_map[current_max_y - 1 + k][current_max_x - 1 + l] = current_max
+                        if plot:
+                            suspicious_coorinations_map[current_max_y][current_max_x] = current_max
+
+            if plot or save_plot_to_file:
+                plt.imshow(suspicious_coorinations_map)
+                plt.title('suspicious_coorinations_map')
+                if save_plot_to_file:
+                    plt.savefig(os.path.join(suspicious_coorinations_map_folder_name, str(current_maps_index) + ".png"))
+                if plot:
+                    plt.show()
+                plt.clf()
 
             suspicious_coorinations_to_keep = []
             while ((suspicious_coorinations is not None) and (0 < len(suspicious_coorinations))):
@@ -1230,30 +876,21 @@ class InspectionCostmapUpdater:
                 for i in sorted(indices_to_remove, reverse=True):
                     del suspicious_coorinations[i]
 
-            result = suspicious_coorinations_to_keep
-
             if plot or save_plot_to_file:
-                max_filter_map_filtered = np.zeros(shape=suspicious_points_map.shape)
+                suspicious_coorinations_map_filtered = np.zeros(shape=suspicious_points_map.shape)
                 for i in range(len(suspicious_coorinations_to_keep)):
-                    suspicious_coorination                                                              = suspicious_coorinations_to_keep[i]
-                    for k in range(3):
-                        for l in range(3):
-                            max_filter_map_filtered[suspicious_coorination[0][1] - 1 + k][suspicious_coorination[0][0] - 1 + l] = suspicious_coorination[1]
-                fig, axs = plt.subplots(1, 3)
-                images = [suspicious_points_map, max_filter_map, max_filter_map_filtered]
-                images_titles = ["filter_map", "max_filter_map", "max_filter_map_filtered"]
-                for i, ax in enumerate(axs.flatten()):
-                    if i < len(images):
-                        ax.set_title(images_titles[i])
-                        ax.imshow(images[i])
-                    else:
-                        ax.remove()
-                # plt.show()
-                plt.savefig(os.path.join(suspicious_points_map_folder_name, str(current_maps_index) + ".png"))
+                    suspicious_coorination                                                                           = suspicious_coorinations_to_keep[i]
+                    suspicious_coorinations_map_filtered[suspicious_coorination[0][1]][suspicious_coorination[0][0]] = suspicious_coorination[1]
+                plt.imshow(suspicious_coorinations_map_filtered)
+                plt.title('suspicious_coorinations_map_filtered')
+                if save_plot_to_file:
+                    plt.savefig(os.path.join(suspicious_coorinations_map_filtered_folder_name, str(current_maps_index) + ".png"))
+                if plot:
+                    plt.show()
                 plt.clf()
                 current_maps_index += 1
 
-        print(result)
+            result = suspicious_coorinations_to_keep
         return result
 
     def calculate_number_of_circles_in_map(self, save_plot_to_file):
@@ -1264,7 +901,11 @@ class InspectionCostmapUpdater:
         current_found_circles_map_file       = os.path.join(found_circles_maps_folder_name      , str(differences_map_index) + ".png")
         current_differences_map_file         = os.path.join(differences_maps_folder_name        , str(differences_map_index) + ".png")
         current_differences_map_process_file = os.path.join(differences_maps_process_folder_name, str(differences_map_index) + ".png")
-        self.calculate_differences_map()
+        cost_map_                            = np.where(self.cost_map < 85, 0, self.cost_map) # self.cost_map < 90
+        self.cost_map_binary                 = self.map_to_binary_map(map=cost_map_)
+        self.differences_map                 = self.cost_map_binary - self.occ_map_binary_dilation
+        self.differences_map                 = np.where(self.differences_map < 0.0, 0.0, self.differences_map)
+        self.differences_map                 = self.binary_dilation(map=self.differences_map, iterations1=3, iterations2=2)
         plt.imshow(self.differences_map)
         plt.savefig(current_differences_map_file)
         plt.clf()
@@ -1316,6 +957,7 @@ class InspectionCostmapUpdater:
                     ax.imshow(images[i])
                 else:
                     ax.remove()
+            # plt.imshow(self.differences_map)
             # plt.show()
             plt.savefig(current_differences_map_process_file)
             plt.clf()
@@ -1387,221 +1029,159 @@ def save_image_map_with_path(map_service, path):
     plt.clf()
     current_path_index += 1
 
-
-class perpetualTimer():
-    def __init__(self, t, hFunction, pub, icmu, save_number_of_circles_in_map):
-        self.start_time = rospy.Time.now() #time.time()
-        self.t = t
-        self.hFunction = hFunction
-        self.thread = Timer(self.t, self.handle_function, [pub, icmu, save_number_of_circles_in_map, self.start_time])
-
-    def handle_function(self, *args):
-        pub                           = args[0]
-        icmu                          = args[1]
-        save_number_of_circles_in_map = args[2]
-        self.hFunction(pub, icmu, save_number_of_circles_in_map, self.start_time)
-        self.thread = Timer(self.t, self.handle_function, [pub, icmu, save_number_of_circles_in_map, self.start_time])
-        self.thread.start()
-
-    def start(self):
-        self.thread.start()
-
-    def cancel(self):
-        self.thread.cancel()
-
-def calculate_number_of_circles_in_map(pub, icmu, save_number_of_circles_in_map, start_time):
-    number_of_circles = icmu.calculate_number_of_circles_in_map(save_plot_to_file=save_number_of_circles_in_map)
-    ts                = (rospy.Time.now() - start_time) #time.time()
-    report_string_msg = "{X} spheres detected at time {TIMESTAMP}".format(X=number_of_circles, TIMESTAMP=ts)
-    pub.publish(report_string_msg)
-    print      (report_string_msg)
-
-suspicious_points = []
+list_of_previous_suspicious_points = []
 
 def move_robot_on_path_inspection(map_service, path, robot_width, error_gap, save_map_with_path_image, save_number_of_circles_in_map):
-    global suspicious_points
+    global list_of_previous_suspicious_points
     if save_map_with_path_image:
         save_image_map_with_path(map_service=map_service, path=path)
     spheres_filter_size = 25#41
     sparsity            = 5
-    # surround_times      = 6
+    surround_times      = 6
     filter_diagonal     = (2.0 * (spheres_filter_size ** 2.0)) ** 0.5
-    # surrounding_sphere  = create_surrounding_sphere(map_service=map_service, surround_times=surround_times, radius=spheres_filter_size)
+    surrounding_sphere  = create_surrounding_sphere(map_service=map_service, surround_times=surround_times, radius=spheres_filter_size)
     # surrounding_sphere  = create_surrounding_sphere(map_service=map_service, surround_times=surround_times, radius=((filter_diagonal / 2.0) + (2.0 * sparsity) + (robot_width * (1.0 + error_gap))))
     icmu                = InspectionCostmapUpdater(occ_map=map_service.map_arr, spheres_filter_size=spheres_filter_size, sparsity=sparsity)
-
-    def take_path_step(map_service, path):
-        try:
-            result = movebase_client(map_service=map_service, path=path)
-            if result:
-                rospy.loginfo("Goal execution done!")
-        except rospy.ROSInterruptException:
-            rospy.loginfo("Navigation Exception.")
-
-    pub_inspection_report = rospy.Publisher('inspection_report', String, queue_size=1)
-
-    t = perpetualTimer(30, calculate_number_of_circles_in_map, pub_inspection_report, icmu, save_number_of_circles_in_map)
-    t.start()
-
-    i = 1
+    i                   = 1
     while i < len(path):
         icmu.update_index_in_path(index=i)
         while icmu.updated_index_in_path < i:
             time.sleep(0.01)
 
+        number_of_circles = icmu.calculate_number_of_circles_in_map(save_plot_to_file=save_number_of_circles_in_map)
+        print("number_of_circles:", number_of_circles)
+
         # Gets a list of suspicious sphere points
-        # current_suspicious_points = icmu.get_suspicious_points(plot=False, save_plot_to_file=True)
-        current_suspicious_points = icmu.get_suspicious_points(plot=False, save_plot_to_file=False)
+        # list_of_suspicious_points = icmu.get_suspicious_points(plot=False, save_plot_to_file=True)
+        list_of_suspicious_points = icmu.get_suspicious_points(plot=False, save_plot_to_file=False)
 
         # Removes suspicious points that have been checked previously
         indices_to_remove = set()
-        for j in range(len(current_suspicious_points)):
-            suspicious_point = np.array(current_suspicious_points[j][0])
-            for k in range(len(suspicious_points)):
-                previous_suspicious_point = np.array(suspicious_points[k])
-                # if np.linalg.norm(suspicious_point - previous_suspicious_point) <= filter_diagonal:
-                if np.linalg.norm(suspicious_point - previous_suspicious_point) <= spheres_filter_size:
+        for j in range(len(list_of_suspicious_points)):
+            suspicious_point = list_of_suspicious_points[j][0]
+            for k in range(len(list_of_previous_suspicious_points)):
+                previous_suspicious_point = list_of_previous_suspicious_points[k]
+                if np.linalg.norm(np.array(suspicious_point) - np.array(previous_suspicious_point)) <= filter_diagonal:
                     indices_to_remove.add(j)
         indices_to_remove = sorted(list(indices_to_remove))
-        map(lambda x: current_suspicious_points.pop(x), sorted(indices_to_remove, key=lambda x: -x))
-        for j in range(len(current_suspicious_points)):
-            suspicious_points.append(current_suspicious_points[j][0])
+        map(lambda x: list_of_suspicious_points.pop(x), sorted(indices_to_remove, key=lambda x: -x))
+        for j in range(len(list_of_suspicious_points)):
+            list_of_previous_suspicious_points.append(list_of_suspicious_points[j][0])
 
-        # Removes path goals if they're too close to any suspicious sphere point
-        # if 0 < len(list_of_suspicious_points):
-        path_points_indices_to_remove = set()
-        for j in range(len(current_suspicious_points)):
-            suspicious_point = np.array(current_suspicious_points[j][0])
-            for k in range(i, len(path)):
-                path_point = path[k]["position"]
-                if np.linalg.norm(np.array((path_point[0], path_point[1], 0.0)) - suspicious_point) < ((filter_diagonal / 2.0) + sparsity):
-                    path_points_indices_to_remove.add(k)
-        path_points_indices_to_remove = list(reversed(sorted(path_points_indices_to_remove)))
-        for j in range(len(path_points_indices_to_remove)):
-            del path[path_points_indices_to_remove[j]]
+        if 0 < len(list_of_suspicious_points):
+            # Removes path goals if they're too close to any suspicious sphere point
+            path_points_indices_to_remove = set()
+            for j in range(len(list_of_suspicious_points)):
+                suspicious_point = np.array(list_of_suspicious_points[j][0])
+                for k in range(i, len(path)):
+                    path_point = path[k]["position"]
+                    if np.linalg.norm(np.array((path_point[0], path_point[1], 0.0)) - suspicious_point) < ((filter_diagonal / 2.0) + sparsity):
+                        path_points_indices_to_remove.add(k)
+            path_points_indices_to_remove = list(reversed(sorted(path_points_indices_to_remove)))
+            for j in range(len(path_points_indices_to_remove)):
+                del path[path_points_indices_to_remove[j]]
+
+            # Filters out points which are not in the room
+            def is_point_in_room(occ_map, current_surrounding_point, radius):
+                radius   = np.ceil(radius)
+                height   = occ_map.shape[0]
+                width    = occ_map.shape[1]
+                diameter = int(math.ceil(radius * 2))
+                base_i   = int(current_surrounding_point[1] - radius)
+                base_j   = int(current_surrounding_point[0] - radius)
+                for i in range(diameter):
+                    for j in range(diameter):
+                        current_i = (base_i + i)
+                        current_j = (base_j + j)
+                        if ((0 <= current_i < height) and (0 <= current_j < width)):
+                            if np.linalg.norm(np.array((current_j, current_i, 0.0)) - current_surrounding_point) <= radius:
+                                if occ_map[current_i][current_j] == -1.0:
+                                    return False
+                return True
+
+            suspicious_points_surrounding_points = []
+            for j in range(len(list_of_suspicious_points)):
+                suspicious_point           = np.array(list_of_suspicious_points[j][0])
+                current_surrounding_sphere = surrounding_sphere + suspicious_point
+                current_surrounding_points = []
+                for k in range(surround_times):
+                    current_surrounding_point = current_surrounding_sphere[k]
+                    if is_point_in_room(occ_map=icmu.occ_map_original, current_surrounding_point=current_surrounding_point, radius=(robot_width * error_gap)):
+                    # if is_point_in_room(cost_map_binary=icmu.cost_map_binary, current_surrounding_point=current_surrounding_point, radius=(robot_width * error_gap)):
+                    #     print("In")
+                        current_surrounding_points.append(current_surrounding_point)
+                    # else:
+                    #     print("Out")
+                    #     current_surrounding_points.append(None)
+                suspicious_points_surrounding_points.append(current_surrounding_points)
+
+            # Creates a list of paths which go around the suspicious points, starting from closest points
+            surrounding_points_paths                        = []
+            current_robot_position                          = np.array(path[i - 1]["position"])
+            # current_robot_position                          = np.array(path[-1]["position"])
+            suspicious_points_closest_surrounding_point_len = len(suspicious_points_surrounding_points)
+            for j in range(suspicious_points_closest_surrounding_point_len):
+                suspicious_points_closest_surrounding_point = []
+                for k in range(len(suspicious_points_surrounding_points)):
+                    current_surrounding_points = suspicious_points_surrounding_points[k]
+                    if 0 < len(current_surrounding_points):
+                        min_distance_index         = 0
+                        min_distance               = np.linalg.norm(current_surrounding_points[min_distance_index] - current_robot_position)
+                        for l in range(1, len(current_surrounding_points)):
+                            current_surrounding_point = current_surrounding_points[l]
+                            current_distance          = np.linalg.norm(current_surrounding_point - current_robot_position)
+                            if current_distance < min_distance:
+                                min_distance_index = l
+                                min_distance       = current_distance
+                        suspicious_points_closest_surrounding_point.append((k, min_distance_index, min_distance))
+                if 0 < len(suspicious_points_closest_surrounding_point):
+                    suspicious_points_closest_surrounding_point              = sorted(suspicious_points_closest_surrounding_point, key=lambda x: x[2]) #key=lambda x: x[1]
+                    closest_suspicious_point_index                           = suspicious_points_closest_surrounding_point[0]
+                    closest_suspicious_point_surrounding_points_index        = closest_suspicious_point_index[0] # k
+                    closest_suspicious_point_closest_surrounding_point_index = closest_suspicious_point_index[1] # min_distance_index
+                    closest_suspicious_point_surrounding_points              = suspicious_points_surrounding_points[closest_suspicious_point_surrounding_points_index]
+                    closest_suspicious_point_closest_surrounding_point       = closest_suspicious_point_surrounding_points[closest_suspicious_point_closest_surrounding_point_index]
+                    closest_suspicious_point_surrounding_points_             = copy.deepcopy(closest_suspicious_point_surrounding_points)
+                    del closest_suspicious_point_surrounding_points_[closest_suspicious_point_closest_surrounding_point_index]
+                    current_surrounding_points_path                 = [closest_suspicious_point_closest_surrounding_point]
+                    closest_suspicious_point_surrounding_points_len = len(closest_suspicious_point_surrounding_points_)
+                    for k in range(closest_suspicious_point_surrounding_points_len):
+                        min_distance_index = 0
+                        min_distance       = np.linalg.norm(closest_suspicious_point_surrounding_points_[0] - current_surrounding_points_path[-1])
+                        for l in range(1, len(closest_suspicious_point_surrounding_points_)):
+                            closest_suspicious_point_surrounding_point = closest_suspicious_point_surrounding_points_[l]
+                            current_distance                           = np.linalg.norm(closest_suspicious_point_surrounding_point - current_surrounding_points_path[-1])
+                            if current_distance < min_distance:
+                                min_distance_index = l
+                                min_distance       = current_distance
+                        current_surrounding_points_path.append(closest_suspicious_point_surrounding_points_[min_distance_index])
+                        del closest_suspicious_point_surrounding_points_[min_distance_index]
+                    surrounding_points_paths.append(current_surrounding_points_path)
+                    current_robot_position = current_surrounding_points_path[-1]
+                    del suspicious_points_surrounding_points[closest_suspicious_point_surrounding_points_index]
+
+            for j in range(len(surrounding_points_paths)):
+                surrounding_points_path = surrounding_points_paths[j]
+                surrounding_points_path = list(reversed(surrounding_points_path))
+                for k in range(len(surrounding_points_path)):
+                    path.insert(i, {"position": (surrounding_points_path[k][0], surrounding_points_path[k][1], surrounding_points_path[k][2]), "angle": 0.0})
 
         if save_map_with_path_image:
             save_image_map_with_path(map_service=map_service, path=path)
 
         # Takes the next step of the path
-        if i < len(path):
-            current_path = [path[i]]
-            take_path_step(map_service=map_service, path=current_path)
+        current_path = [path[i]]
+        try:
+            result = movebase_client(map_service=map_service, path=current_path)
+            if result:
+                rospy.loginfo("Goal execution done!")
+        except rospy.ROSInterruptException:
+            rospy.loginfo("Navigation Exception.")
 
         i += 1
 
-    # suspicious_points_path = []
-    # suspicious_points      = list(reversed(suspicious_points))
-    #
-    # # Filters out points which are not in the room
-    # def is_point_in_room(occ_map, current_surrounding_point, radius):
-    #     radius = np.ceil(radius)
-    #     height = occ_map.shape[0]
-    #     width = occ_map.shape[1]
-    #     diameter = int(math.ceil(radius * 2))
-    #     base_i = int(current_surrounding_point[1] - radius)
-    #     base_j = int(current_surrounding_point[0] - radius)
-    #     for i in range(diameter):
-    #         for j in range(diameter):
-    #             current_i = (base_i + i)
-    #             current_j = (base_j + j)
-    #             if ((0 <= current_i < height) and (0 <= current_j < width)):
-    #                 if np.linalg.norm(np.array((current_j, current_i, 0.0)) - current_surrounding_point) <= radius:
-    #                     if occ_map[current_i][current_j] == -1.0:
-    #                         return False
-    #     return True
-    #
-    # # Creates a list such that each suspicious point has a list of surrounding points
-    # suspicious_points_surrounding_points = []
-    # for j in range(len(suspicious_points)):
-    #     suspicious_point           = np.array(suspicious_points[j][0])
-    #     current_surrounding_sphere = surrounding_sphere + suspicious_point
-    #     current_surrounding_points = []
-    #     for k in range(surround_times):
-    #         current_surrounding_point = current_surrounding_sphere[k]
-    #         if is_point_in_room(occ_map=icmu.occ_map_original, current_surrounding_point=current_surrounding_point, radius=(robot_width * error_gap)):
-    #             # if is_point_in_room(cost_map_binary=icmu.cost_map_binary, current_surrounding_point=current_surrounding_point, radius=(robot_width * error_gap)):
-    #             #     print("In")
-    #             current_surrounding_points.append(current_surrounding_point)
-    #         # else:
-    #         #     print("Out")
-    #         #     current_surrounding_points.append(None)
-    #     suspicious_points_surrounding_points.append(current_surrounding_points)
-    #
-    # # Creates a list of paths which go around the suspicious points, starting from closest points
-    # surrounding_points_paths                        = []
-    # current_robot_position                          = np.array(path[i - 1]["position"])
-    # # current_robot_position                          = np.array(path[-1]["position"])
-    # suspicious_points_closest_surrounding_point_len = len(suspicious_points_surrounding_points)
-    # for j in range(suspicious_points_closest_surrounding_point_len):
-    #     suspicious_points_closest_surrounding_point = []
-    #     for k in range(len(suspicious_points_surrounding_points)):
-    #         current_surrounding_points = suspicious_points_surrounding_points[k]
-    #         if 0 < len(current_surrounding_points):
-    #             min_distance_index = 0
-    #             min_distance       = np.linalg.norm(current_surrounding_points[min_distance_index] - current_robot_position)
-    #             for l in range(1, len(current_surrounding_points)):
-    #                 current_surrounding_point = current_surrounding_points[l]
-    #                 current_distance          = np.linalg.norm(current_surrounding_point - current_robot_position)
-    #                 if current_distance < min_distance:
-    #                     min_distance_index = l
-    #                     min_distance       = current_distance
-    #             suspicious_points_closest_surrounding_point.append((k, min_distance_index, min_distance))
-    #     if 0 < len(suspicious_points_closest_surrounding_point):
-    #         suspicious_points_closest_surrounding_point              = sorted(suspicious_points_closest_surrounding_point, key=lambda x: x[2])  # key=lambda x: x[1]
-    #         closest_suspicious_point_index                           = suspicious_points_closest_surrounding_point[0]
-    #         closest_suspicious_point_surrounding_points_index        = closest_suspicious_point_index[0]  # k
-    #         closest_suspicious_point_closest_surrounding_point_index = closest_suspicious_point_index[1]  # min_distance_index
-    #         closest_suspicious_point_surrounding_points              = suspicious_points_surrounding_points[closest_suspicious_point_surrounding_points_index]
-    #         closest_suspicious_point_closest_surrounding_point       = closest_suspicious_point_surrounding_points[closest_suspicious_point_closest_surrounding_point_index]
-    #         closest_suspicious_point_surrounding_points_             = copy.deepcopy(closest_suspicious_point_surrounding_points)
-    #         del closest_suspicious_point_surrounding_points_[closest_suspicious_point_closest_surrounding_point_index]
-    #         current_surrounding_points_path                 = [closest_suspicious_point_closest_surrounding_point]
-    #         closest_suspicious_point_surrounding_points_len = len(closest_suspicious_point_surrounding_points_)
-    #         for k in range(closest_suspicious_point_surrounding_points_len):
-    #             min_distance_index = 0
-    #             min_distance       = np.linalg.norm(closest_suspicious_point_surrounding_points_[0] - current_surrounding_points_path[-1])
-    #             for l in range(1, len(closest_suspicious_point_surrounding_points_)):
-    #                 closest_suspicious_point_surrounding_point = closest_suspicious_point_surrounding_points_[l]
-    #                 current_distance                           = np.linalg.norm(closest_suspicious_point_surrounding_point - current_surrounding_points_path[-1])
-    #                 if current_distance < min_distance:
-    #                     min_distance_index = l
-    #                     min_distance       = current_distance
-    #             current_surrounding_points_path.append(closest_suspicious_point_surrounding_points_[min_distance_index])
-    #             del closest_suspicious_point_surrounding_points_[min_distance_index]
-    #         surrounding_points_paths.append(current_surrounding_points_path)
-    #         current_robot_position = current_surrounding_points_path[-1]
-    #         del suspicious_points_surrounding_points[closest_suspicious_point_surrounding_points_index]
-    #
-    # for j in range(len(surrounding_points_paths)):
-    #     surrounding_points_path = surrounding_points_paths[j]
-    #     surrounding_points_path = list(reversed(surrounding_points_path))
-    #     for k in range(len(surrounding_points_path)):
-    #         path.insert(i, {"position": (surrounding_points_path[k][0], surrounding_points_path[k][1], surrounding_points_path[k][2]), "angle": 0.0})
-    #
-    # path.extend(suspicious_points_path)
-    #
-    # while i < len(path):
-    #     icmu.update_index_in_path(index=i)
-    #     while icmu.updated_index_in_path < i:
-    #         time.sleep(0.01)
-    #
-    #     number_of_circles = icmu.calculate_number_of_circles_in_map(save_plot_to_file=save_number_of_circles_in_map)
-    #     print("number_of_circles:", number_of_circles)
-    #
-    #     if save_map_with_path_image:
-    #         save_image_map_with_path(map_service=map_service, path=path)
-    #
-    #     # Takes the next step of the path
-    #     current_path = [path[i]]
-    #     take_path_step(map_service=map_service, path=current_path)
-    #
-    #     i += 1
-
-    # Cancels the number of circles calculation thread
-    t.cancel()
-
-    calculate_number_of_circles_in_map(pub=pub_inspection_report, icmu=icmu, save_number_of_circles_in_map=save_number_of_circles_in_map, start_time=t.start_time)
+    number_of_circles = icmu.calculate_number_of_circles_in_map(save_plot_to_file=save_number_of_circles_in_map)
+    print("number_of_circles:", number_of_circles)
 
 def create_folder(folder_name):
     try:
@@ -1617,13 +1197,17 @@ def create_folder(folder_name):
 def create_paths_images_folder():
     global path_folder_name
     global suspicious_points_map_folder_name
+    global suspicious_coorinations_map_folder_name
+    global suspicious_coorinations_map_filtered_folder_name
     global found_circles_maps_folder_name
     global differences_maps_folder_name
     global differences_maps_process_folder_name
-    create_folder(folder_name=path_folder_name                    )
-    create_folder(folder_name=suspicious_points_map_folder_name   )
-    create_folder(folder_name=found_circles_maps_folder_name      )
-    create_folder(folder_name=differences_maps_folder_name        )
+    create_folder(folder_name=path_folder_name                                )
+    create_folder(folder_name=suspicious_points_map_folder_name               )
+    create_folder(folder_name=suspicious_coorinations_map_folder_name         )
+    create_folder(folder_name=suspicious_coorinations_map_filtered_folder_name)
+    create_folder(folder_name=found_circles_maps_folder_name)
+    create_folder(folder_name=differences_maps_folder_name)
     create_folder(folder_name=differences_maps_process_folder_name)
 
 def inspection(ms, robot_width, error_gap):
@@ -1631,13 +1215,11 @@ def inspection(ms, robot_width, error_gap):
 
     create_paths_images_folder()
 
-    # occ_map = ms.map_arr
-    cb                      = CleaningBlocks(ms)
-    # cb                      = CleaningBlocks(occ_map)
+    occ_map = ms.map_arr
+
+    cb                      = CleaningBlocks(occ_map)
     first_pose, first_angle = ms.get_first_pose()
-    # triangle_list           = cb.sort(first_pose)
-    first_ind               = cb.locate_initial_pose(first_pose)
-    triangle_list           = plan_path(first_ind, cb.dist_mat, cb.triangles)
+    triangle_list           = cb.sort(first_pose)
 
     # Draw delaunay triangles
     # cb.draw_triangle_order()
@@ -1660,8 +1242,7 @@ def inspection(ms, robot_width, error_gap):
     # plot_path(borders=borders, path=path, plot=False, save_to_file=True)
 
     # Moves the robot according to the path
-    # move_robot_on_path_inspection(map_service=ms, path=path, robot_width=robot_width, error_gap=error_gap, save_map_with_path_image=True, save_number_of_circles_in_map=True)
-    move_robot_on_path_inspection(map_service=ms, path=path, robot_width=robot_width, error_gap=error_gap, save_map_with_path_image=False, save_number_of_circles_in_map=False)
+    move_robot_on_path_inspection(map_service=ms, path=path, robot_width=robot_width, error_gap=error_gap, save_map_with_path_image=True, save_number_of_circles_in_map=True)
 
 
 if __name__ == '__main__':
@@ -1673,18 +1254,16 @@ if __name__ == '__main__':
     rc_DWA_client.update_configuration({"max_vel_x": np.inf})
     rc_DWA_client.update_configuration({"max_vel_trans": np.inf})
 
-    # agent_id = sys.argv[2]
-    agent_id = 0
-    ms       = MapService(agent_id)
+    ms = MapService()
 
     Triangle = namedtuple('Triangle', ['coordinates', 'center', 'area', 'edges'])
 
-    exec_mode = sys.argv[1]
+    # exec_mode = sys.argv[1]
 
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
     # exec_mode = 'cleaning'
-    # exec_mode = 'inspection'
+    exec_mode = 'inspection'
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
 
