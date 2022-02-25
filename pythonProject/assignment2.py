@@ -1159,12 +1159,20 @@ class InspectionCostmapUpdater:
     def update_index_in_path(self, index):
         self.current_index_in_path = index
 
+    def calculate_differences_map(self):
+        cost_map_ = np.where(self.cost_map < 85, 0, self.cost_map)  # self.cost_map < 90
+        self.cost_map_binary = self.map_to_binary_map(map=cost_map_)
+        self.differences_map = self.cost_map_binary - self.occ_map_binary_dilation
+        self.differences_map = np.where(self.differences_map < 0.0, 0.0, self.differences_map)
+        self.differences_map = self.binary_dilation(map=self.differences_map, iterations1=3, iterations2=2)
+
     def get_suspicious_points(self, plot=False, save_plot_to_file=False):
         global suspicious_points_map_folder_name
         global suspicious_coorinations_map_folder_name
         global suspicious_coorinations_map_filtered_folder_name
         global current_maps_index
         result = []
+        self.calculate_differences_map()
         if self.differences_map is not None:
             suspicious_points_map = np.zeros(shape=self.differences_map.shape)
             height                = self.differences_map.shape[0]
@@ -1209,7 +1217,7 @@ class InspectionCostmapUpdater:
                                 current_max_x, current_max_y = j_ + l, i_ + k
                     if 0.0 < current_max:
                         suspicious_coorinations.append(((current_max_y, current_max_x, 0.0), current_max))
-                        if plot:
+                        if plot or save_plot_to_file:
                             suspicious_coorinations_map[current_max_y][current_max_x] = current_max
 
             if plot or save_plot_to_file:
@@ -1263,11 +1271,7 @@ class InspectionCostmapUpdater:
         current_found_circles_map_file       = os.path.join(found_circles_maps_folder_name      , str(differences_map_index) + ".png")
         current_differences_map_file         = os.path.join(differences_maps_folder_name        , str(differences_map_index) + ".png")
         current_differences_map_process_file = os.path.join(differences_maps_process_folder_name, str(differences_map_index) + ".png")
-        cost_map_                            = np.where(self.cost_map < 85, 0, self.cost_map) # self.cost_map < 90
-        self.cost_map_binary                 = self.map_to_binary_map(map=cost_map_)
-        self.differences_map                 = self.cost_map_binary - self.occ_map_binary_dilation
-        self.differences_map                 = np.where(self.differences_map < 0.0, 0.0, self.differences_map)
-        self.differences_map                 = self.binary_dilation(map=self.differences_map, iterations1=3, iterations2=2)
+        self.calculate_differences_map()
         plt.imshow(self.differences_map)
         plt.savefig(current_differences_map_file)
         plt.clf()
@@ -1640,7 +1644,6 @@ def inspection(ms, robot_width, error_gap):
     create_paths_images_folder()
 
     # occ_map = ms.map_arr
-
     cb                      = CleaningBlocks(ms)
     # cb                      = CleaningBlocks(occ_map)
     first_pose, first_angle = ms.get_first_pose()
