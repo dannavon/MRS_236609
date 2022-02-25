@@ -1118,8 +1118,6 @@ def vacuum_cleaning(ms, robot_width, error_gap):
 
 path_folder_name                                 = "paths"
 suspicious_points_map_folder_name                = "suspicious_points_maps"
-suspicious_coorinations_map_folder_name          = "suspicious_coorinations_maps"
-suspicious_coorinations_map_filtered_folder_name = "suspicious_coorinations_map_filtereds"
 found_circles_maps_folder_name                   = "found_circles_maps"
 differences_maps_folder_name                     = "differences_maps"
 differences_maps_process_folder_name             = "differences_maps_process"
@@ -1168,8 +1166,6 @@ class InspectionCostmapUpdater:
 
     def get_suspicious_points(self, plot=False, save_plot_to_file=False):
         global suspicious_points_map_folder_name
-        global suspicious_coorinations_map_folder_name
-        global suspicious_coorinations_map_filtered_folder_name
         global current_maps_index
         result = []
         self.calculate_differences_map()
@@ -1189,16 +1185,9 @@ class InspectionCostmapUpdater:
                                 sum += self.differences_map[i_ + k][j_ + l]
                     suspicious_points_map[i][j] = sum
 
-            suspicious_coorinations_map = None
+            max_filter_map = None
             if plot or save_plot_to_file:
-                plt.imshow(suspicious_points_map)
-                plt.title('suspicious_points_map stride:' + str(self.sparsity))
-                if save_plot_to_file:
-                    plt.savefig(os.path.join(suspicious_points_map_folder_name, str(current_maps_index) + ".png"))
-                if plot:
-                    plt.show()
-                plt.clf()
-                suspicious_coorinations_map = np.zeros(shape=suspicious_points_map.shape)
+                max_filter_map = np.zeros(shape=suspicious_points_map.shape)
 
             suspicious_coorinations = []
             height_filters          = int(suspicious_points_map.shape[0] / self.spheres_filter_size)
@@ -1218,16 +1207,9 @@ class InspectionCostmapUpdater:
                     if 0.0 < current_max:
                         suspicious_coorinations.append(((current_max_y, current_max_x, 0.0), current_max))
                         if plot or save_plot_to_file:
-                            suspicious_coorinations_map[current_max_y][current_max_x] = current_max
-
-            if plot or save_plot_to_file:
-                plt.imshow(suspicious_coorinations_map)
-                plt.title('suspicious_coorinations_map')
-                if save_plot_to_file:
-                    plt.savefig(os.path.join(suspicious_coorinations_map_folder_name, str(current_maps_index) + ".png"))
-                if plot:
-                    plt.show()
-                plt.clf()
+                            for k in range(3):
+                                for l in range(3):
+                                    max_filter_map[current_max_y - 1 + k][current_max_x - 1 + l] = current_max
 
             suspicious_coorinations_to_keep = []
             while ((suspicious_coorinations is not None) and (0 < len(suspicious_coorinations))):
@@ -1246,21 +1228,30 @@ class InspectionCostmapUpdater:
                 for i in sorted(indices_to_remove, reverse=True):
                     del suspicious_coorinations[i]
 
+            result = suspicious_coorinations_to_keep
+
             if plot or save_plot_to_file:
-                suspicious_coorinations_map_filtered = np.zeros(shape=suspicious_points_map.shape)
+                max_filter_map_filtered = np.zeros(shape=suspicious_points_map.shape)
                 for i in range(len(suspicious_coorinations_to_keep)):
-                    suspicious_coorination                                                                           = suspicious_coorinations_to_keep[i]
-                    suspicious_coorinations_map_filtered[suspicious_coorination[0][1]][suspicious_coorination[0][0]] = suspicious_coorination[1]
-                plt.imshow(suspicious_coorinations_map_filtered)
-                plt.title('suspicious_coorinations_map_filtered')
-                if save_plot_to_file:
-                    plt.savefig(os.path.join(suspicious_coorinations_map_filtered_folder_name, str(current_maps_index) + ".png"))
-                if plot:
-                    plt.show()
+                    suspicious_coorination                                                              = suspicious_coorinations_to_keep[i]
+                    for k in range(3):
+                        for l in range(3):
+                            max_filter_map_filtered[suspicious_coorination[0][1] - 1 + k][suspicious_coorination[0][0] - 1 + l] = suspicious_coorination[1]
+                fig, axs = plt.subplots(1, 3)
+                images = [suspicious_points_map, max_filter_map, max_filter_map_filtered]
+                images_titles = ["filter_map", "max_filter_map", "max_filter_map_filtered"]
+                for i, ax in enumerate(axs.flatten()):
+                    if i < len(images):
+                        ax.set_title(images_titles[i])
+                        ax.imshow(images[i])
+                    else:
+                        ax.remove()
+                # plt.show()
+                plt.savefig(os.path.join(suspicious_points_map_folder_name, str(current_maps_index) + ".png"))
                 plt.clf()
                 current_maps_index += 1
 
-            result = suspicious_coorinations_to_keep
+        print(result)
         return result
 
     def calculate_number_of_circles_in_map(self, save_plot_to_file):
@@ -1323,7 +1314,6 @@ class InspectionCostmapUpdater:
                     ax.imshow(images[i])
                 else:
                     ax.remove()
-            # plt.imshow(self.differences_map)
             # plt.show()
             plt.savefig(current_differences_map_process_file)
             plt.clf()
@@ -1407,7 +1397,7 @@ class perpetualTimer():
         pub                           = args[0]
         icmu                          = args[1]
         save_number_of_circles_in_map = args[2]
-        self.hFunction(pub, icmu, save_number_of_circles_in_map)
+        self.hFunction(pub, icmu, save_number_of_circles_in_map, self.start_time)
         self.thread = Timer(self.t, self.handle_function, [pub, icmu, save_number_of_circles_in_map, self.start_time])
         self.thread.start()
 
@@ -1449,7 +1439,7 @@ def move_robot_on_path_inspection(map_service, path, robot_width, error_gap, sav
     pub_inspection_report = rospy.Publisher('inspection_report', String, queue_size=1)
 
     t = perpetualTimer(30, calculate_number_of_circles_in_map, pub_inspection_report, icmu, save_number_of_circles_in_map)
-    t.start()
+    # t.start()
 
     i = 1
     while i < len(path):
@@ -1625,17 +1615,13 @@ def create_folder(folder_name):
 def create_paths_images_folder():
     global path_folder_name
     global suspicious_points_map_folder_name
-    global suspicious_coorinations_map_folder_name
-    global suspicious_coorinations_map_filtered_folder_name
     global found_circles_maps_folder_name
     global differences_maps_folder_name
     global differences_maps_process_folder_name
-    create_folder(folder_name=path_folder_name                                )
-    create_folder(folder_name=suspicious_points_map_folder_name               )
-    create_folder(folder_name=suspicious_coorinations_map_folder_name         )
-    create_folder(folder_name=suspicious_coorinations_map_filtered_folder_name)
-    create_folder(folder_name=found_circles_maps_folder_name)
-    create_folder(folder_name=differences_maps_folder_name)
+    create_folder(folder_name=path_folder_name                    )
+    create_folder(folder_name=suspicious_points_map_folder_name   )
+    create_folder(folder_name=found_circles_maps_folder_name      )
+    create_folder(folder_name=differences_maps_folder_name        )
     create_folder(folder_name=differences_maps_process_folder_name)
 
 def inspection(ms, robot_width, error_gap):
