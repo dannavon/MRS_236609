@@ -1087,9 +1087,11 @@ def vacuum_cleaning(ms, robot_width, error_gap):
     print('start vacuum_cleaning')
 
     cb                      = CleaningBlocks(ms)
-    # cb                      = CleaningBlocks(ms.map_arr)
+    # cb                      = CleaningBlocks(occ_map)
     first_pose, first_angle = ms.get_first_pose()
-    triangle_list           = cb.sort(first_pose)
+    # triangle_list           = cb.sort(first_pose)
+    first_ind               = cb.locate_initial_pose(first_pose)
+    triangle_list           = plan_path(first_ind, cb.dist_mat, cb.triangles)
 
     # Draw delaunay triangles
     # cb.draw_triangle_order()
@@ -1680,8 +1682,8 @@ if __name__ == '__main__':
 
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
-    # exec_mode = 'cleaning'
-    exec_mode = 'inspection'
+    exec_mode = 'cleaning'
+    # exec_mode = 'inspection'
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
 
