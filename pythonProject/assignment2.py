@@ -1441,7 +1441,7 @@ def move_robot_on_path_inspection(map_service, path, robot_width, error_gap, sav
     pub_inspection_report = rospy.Publisher('inspection_report', String, queue_size=1)
 
     t = perpetualTimer(30, calculate_number_of_circles_in_map, pub_inspection_report, icmu, save_number_of_circles_in_map)
-    # t.start()
+    t.start()
 
     i = 1
     while i < len(path):
@@ -1450,8 +1450,8 @@ def move_robot_on_path_inspection(map_service, path, robot_width, error_gap, sav
             time.sleep(0.01)
 
         # Gets a list of suspicious sphere points
-        current_suspicious_points = icmu.get_suspicious_points(plot=False, save_plot_to_file=True)
-        # current_suspicious_points = icmu.get_suspicious_points(plot=False, save_plot_to_file=False)
+        # current_suspicious_points = icmu.get_suspicious_points(plot=False, save_plot_to_file=True)
+        current_suspicious_points = icmu.get_suspicious_points(plot=False, save_plot_to_file=False)
 
         # Removes suspicious points that have been checked previously
         indices_to_remove = set()
@@ -1660,7 +1660,8 @@ def inspection(ms, robot_width, error_gap):
     # plot_path(borders=borders, path=path, plot=False, save_to_file=True)
 
     # Moves the robot according to the path
-    move_robot_on_path_inspection(map_service=ms, path=path, robot_width=robot_width, error_gap=error_gap, save_map_with_path_image=True, save_number_of_circles_in_map=True)
+    # move_robot_on_path_inspection(map_service=ms, path=path, robot_width=robot_width, error_gap=error_gap, save_map_with_path_image=True, save_number_of_circles_in_map=True)
+    move_robot_on_path_inspection(map_service=ms, path=path, robot_width=robot_width, error_gap=error_gap, save_map_with_path_image=False, save_number_of_circles_in_map=False)
 
 
 if __name__ == '__main__':
@@ -1678,11 +1679,11 @@ if __name__ == '__main__':
 
     Triangle = namedtuple('Triangle', ['coordinates', 'center', 'area', 'edges'])
 
-    # exec_mode = sys.argv[1]
+    exec_mode = sys.argv[1]
 
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
-    exec_mode = 'cleaning'
+    # exec_mode = 'cleaning'
     # exec_mode = 'inspection'
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
     # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
