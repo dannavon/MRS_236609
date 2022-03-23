@@ -533,12 +533,12 @@ class CostMapUpdater:
     def init_costmap_callback(self, msg):
         print('only once')  # For the student to understand
         self.shape = msg.info.height, msg.info.width
-        self.cost_map = np.array(msg.data).reshape(self.shape)
+        self.cost_map = np.array(msg.data, dtype=np.uint8).reshape(self.shape)
 
     def costmap_callback_update(self, msg):
         print('periodically')  # For the student to understand
         shape = msg.height, msg.width
-        data = np.array(msg.data).reshape(shape)
+        data = np.array(msg.data, dtype=np.uint8).reshape(shape)
         self.cost_map[msg.y:msg.y + shape[0], msg.x: msg.x + shape[1]] = data
         self.show_map()  # For the student to see that it works
 
@@ -565,7 +565,7 @@ class MapService(object):
         shape = self.map_data.info.height, self.map_data.info.width
         self.map_arr = np.array(self.map_data.data, dtype='float32').reshape(shape)
         self.resolution = self.map_data.info.resolution
-        res, map_binary = cv.threshold(self.map_arr, 90, 255, 0)
+        _, map_binary = cv.threshold(self.map_arr, 90, 255, 0)
         self.map_binary = np.uint8(map_binary)
         self.map_rgb = cv.cvtColor(self.map_binary, cv.COLOR_GRAY2BGR)
 
@@ -596,7 +596,7 @@ class MapService(object):
                 print("Waiting for initial_pose. i =", i)
             i += 1
             time.sleep(1.0)
-        # print("initial_pose:", ms.initial_pose)
+        print("initial_pose:", ms.initial_pose)
 
         pos   = self.position_to_map(np.array([self.initial_pose.position.x, self.initial_pose.position.y]))
         angle = euler_from_quaternion((self.initial_pose.orientation.x, self.initial_pose.orientation.y, self.initial_pose.orientation.z, self.initial_pose.orientation.w))[2]
@@ -1006,7 +1006,6 @@ def movebase_client(map_service, path):
 
     # Waits until the action server has started up and started listening for goals.
     client.wait_for_server()
-
     for current_goal in path:
         # Creates a MoveBaseGoal object
         goal = MoveBaseGoal()
@@ -1133,7 +1132,10 @@ class InspectionCostmapUpdater:
         self.sparsity                               = sparsity
         self.occ_map_original                       = occ_map
         # self.occ_map_binary_dilation                = self.binary_dilation(map=self.occ_map_original, iterations1=0, iterations2=3)
-        self.occ_map_binary_dilation                = self.binary_dilation(map=self.occ_map_original, iterations1=0, iterations2=4)
+        # self.occ_map_binary_dilation = self.binary_dilation(map=self.occ_map_original, iterations1=0, iterations2=4)
+        _, occ_map_thresh               = cv.threshold(occ_map, 95, 255, 0)
+        occ_map_thresh = occ_map_thresh.astype(np.uint8)
+        self.occ_map_binary_dilation                = cv.dilate(occ_map_thresh, cv.getStructuringElement(cv.MORPH_CROSS, (5, 5)))
         self.cost_map                               = None
         self.cost_map_binary                        = None
         self.differences_map                        = None
@@ -1147,7 +1149,8 @@ class InspectionCostmapUpdater:
 
     def init_costmap_callback(self, msg):
         self.shape    = msg.info.height, msg.info.width
-        self.cost_map = np.array(msg.data).reshape(self.shape)
+        self.cost_map = np.array(msg.data, dtype=np.uint8).reshape(self.shape)
+        # self.cost_map = np.array(msg.data).reshape(self.shape)
 
     def costmap_callback_update(self, msg):
         if self.updated_index_in_path < self.current_index_in_path:
@@ -1160,11 +1163,18 @@ class InspectionCostmapUpdater:
         self.current_index_in_path = index
 
     def calculate_differences_map(self):
-        cost_map_ = np.where(self.cost_map < 85, 0, self.cost_map)  # self.cost_map < 90
-        self.cost_map_binary = self.map_to_binary_map(map=cost_map_)
+        # cost_map_ = np.where(self.cost_map < 85, 0, self.cost_map)  # self.cost_map < 90
+        # self.map_to_binary_map(map=cost_map_)
+        _, cost_map_ = cv.threshold(self.cost_map, 95, 255, 0)
+        self.cost_map_binary = cv.dilate(cost_map_, cv.getStructuringElement(cv.MORPH_CROSS, (3, 3)))
         self.differences_map = self.cost_map_binary - self.occ_map_binary_dilation
-        self.differences_map = np.where(self.differences_map < 0.0, 0.0, self.differences_map)
-        self.differences_map = self.binary_dilation(map=self.differences_map, iterations1=3, iterations2=2)
+        #self.differences_map = np.where(self.differences_map < 0, 0, self.differences_map)
+        # self.differences_map = self.binary_dilation(map=self.differences_map, iterations1=3, iterations2=2)
+        _, self.differences_map = cv.threshold(self.differences_map, 95, 255, 0)
+        kernel = np.ones((5,5),np.uint8)
+        self.differences_map = cv.morphologyEx(self.differences_map, cv.MORPH_CLOSE, kernel)
+        # self.differences_map = cv.dilate(self.differences_map, cv.getStructuringElement(cv.MORPH_CROSS, (3, 3)))
+
 
     def get_suspicious_points(self, plot=False, save_plot_to_file=False):
         global suspicious_points_map_folder_name
@@ -1175,7 +1185,7 @@ class InspectionCostmapUpdater:
             suspicious_points_map = np.zeros(shape=self.differences_map.shape)
             height                = self.differences_map.shape[0]
             width                 = self.differences_map.shape[1]
-            half_filter           = int(self.spheres_filter_size / 2.0)
+            half_filter           = int(self.spheres_filter_size / 2)
             for i in range(0, height, self.sparsity):
                 for j in range(0, width, self.sparsity):
                     i_  = i - half_filter
@@ -1266,17 +1276,18 @@ class InspectionCostmapUpdater:
         current_differences_map_process_file = os.path.join(differences_maps_process_folder_name, str(differences_map_index) + ".png")
         self.calculate_differences_map()
         plt.imshow(self.differences_map)
+        #plt.savefig(self.differences_map)
         plt.savefig(current_differences_map_file)
         plt.clf()
 
         # Loads an image
-        src = cv.imread(cv.samples.findFile(current_differences_map_file), cv.IMREAD_COLOR)
+        src = self.differences_map #cv.imread(cv.samples.findFile(current_differences_map_file), cv.IMREAD_COLOR)
         if src is None: # Check if image is loaded fine
             print ('Error opening image!')
             print ('Usage: hough_circle.py [image_name -- default ' + current_differences_map_file + '] \n')
             return -1
-        gray    = cv.cvtColor(src, cv.COLOR_BGR2GRAY)
-        gray    = cv.medianBlur(gray, 5)
+        # gray    = cv.cvtColor(src, cv.COLOR_BGR2GRAY) #????????????
+        gray    = cv.medianBlur(src, 5)
         # plt.imshow(gray)
         # plt.show()
         rows    = gray.shape[0]
@@ -1668,7 +1679,7 @@ if __name__ == '__main__':
     robot_width = 5.0
     error_gap   = 0.15
 
-    rospy.init_node('get_map_example')
+    rospy.init_node('assignment2')
     rc_DWA_client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS/")
     rc_DWA_client.update_configuration({"max_vel_x": np.inf})
     rc_DWA_client.update_configuration({"max_vel_trans": np.inf})
@@ -1696,9 +1707,6 @@ if __name__ == '__main__':
     else:
         print("Code not found")
         raise NotImplementedError
-
-
-
 
     ##### Gridsearch for the corners detection algorithm's parameters
 

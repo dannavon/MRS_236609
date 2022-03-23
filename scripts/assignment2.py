@@ -235,6 +235,9 @@ class CleaningBlocks:
         self.triangles = sorted_triangles
         return self.triangles
 
+
+
+
 class CostMapUpdater:
 
     def __init__(self):

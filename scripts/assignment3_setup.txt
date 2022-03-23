@@ -26,3 +26,14 @@ cd ~/ws/
 source devel/setup.bash
 export TURTLEBOT3_MODEL=burger
 rosrun MRS_236609 assignment3.py inspection $(agent_id) $(agent_max_vel) # agent_id is 0 or 1, and agent_max_vel is bounded by 0.22
+
+
+cd ~/ws/
+source devel/setup.bash
+export TURTLEBOT3_MODEL=burger
+rosrun MRS_236609 assignment3.py inspection 0 0.22
+
+cd ~/ws/
+source devel/setup.bash
+export TURTLEBOT3_MODEL=burger
+rosrun MRS_236609 assignment3.py inspection 1 0.22

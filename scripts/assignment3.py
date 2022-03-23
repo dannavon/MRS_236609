@@ -12,6 +12,8 @@ import matplotlib.pyplot as plt
 import logging
 import actionlib
 import multi_move_base
+from std_msgs.msg import String
+from nav_msgs.msg import Odometry
 
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from actionlib_msgs.msg import GoalStatus
@@ -28,6 +30,7 @@ from nav_msgs.msg import OccupancyGrid
 from map_msgs.msg import OccupancyGridUpdate
 from collections import namedtuple
 from Queue import PriorityQueue
+from control_msgs.srv import QueryTrajectoryState, QueryTrajectoryStateResponse
 
 
 def plan_path(first_ind, dist_mat, triangles):
@@ -253,7 +256,7 @@ class CleaningBlocks:
                 ind = i
         return ind
 
-    def draw_path(self, triangle_order):
+    def draw_path(self, triangle_order,green):
         img = self.map_rgb
         c1 = triangle_order[0].center
         c1 = tuple(np.uint32((round(c1[0]), round(c1[1]))))
@@ -261,9 +264,43 @@ class CleaningBlocks:
             c2 = triangle_order[i].center
             c2 = tuple(np.uint32((round(c2[0]), round(c2[1]))))
 
-            cv.line(img, c1, c2, (255, 0, i * 9), 1, cv.LINE_AA, 0)
-            cv.circle(img, c1, 2, (255, 0, i * 9), cv.FILLED, cv.LINE_AA)
+            cv.line(img, c1, c2, (255-green, green, i * 9), 1, cv.LINE_AA, 0)
+            cv.circle(img, c1, 2, (255-green, green, i * 9), cv.FILLED, cv.LINE_AA)
             c1 = c2
+
+def get_poses_client():
+    rospy.wait_for_service('QueryTrajectory')
+    try:
+        get_trajectory = rospy.ServiceProxy('QueryTrajectory', QueryTrajectoryState)
+        print("Service call successed")
+        resp = get_trajectory()
+        return resp
+    except rospy.ServiceException as e:
+        print("Service call failed: %s" % e)
+
+
+class SendPosesServer:
+    def __init__(self, poses_list):
+        self.msg = None
+        msg = QueryTrajectoryStateResponse()
+        for p in poses_list:
+            c = p.center
+            msg.position.append(c[0])
+            msg.position.append(c[1])
+        # rospy.init_node('QueryTrajectory_server')
+
+        self.srv = rospy.Service('QueryTrajectory', QueryTrajectoryState, self.send_poses)
+        self.msg = msg
+        print("QueryTrajectory has been sent.")
+        # rospy.spin()
+
+    def send_poses(self, req):
+        print("req time: %s\n"%(req.time))
+
+        while self.msg is None:
+            time.sleep(1.0)
+
+        return self.msg
 
 
 # class MoveBaseSeq():
@@ -525,7 +562,19 @@ def is_same_edge(e1, e2):
     return (e1[0] == e2[0] and e1[1] == e2[1]) or (e1[0] == e2[1] and e1[1] == e2[0])
 
 
-def vacuum_cleaning(agent_id, agent_max_vel):
+class Cleaner:
+    def __init__(self):
+        rospy.Subscriber('dirt', String, self.update_dirt_status)
+
+    def update_dirt_status(self, msg):
+        self.dirt_str = msg.data
+        print(self.dirt_str)
+
+
+def vacuum_cleaning(agent_id, agent_max_vel, ms):
+
+    # rospy.Subscriber('/tb3_%d/odom' % i, Odometry, self.update_dirt_status)
+    agent = Cleaner()
     x = 0
     y = 1
     print('cleaning (%d,%d)' % (x, y))
@@ -536,7 +585,7 @@ def vacuum_cleaning(agent_id, agent_max_vel):
     y = 0
     print('cleaning (%d,%d)' % (x, y))
     result = multi_move_base.move(agent_id, x, y)
-
+    rospy.spin()
 
 def inspection(agent_id, agent_max_vel):
     print('start inspection')
@@ -545,8 +594,10 @@ def inspection(agent_id, agent_max_vel):
 # If the python node is executed as main process (sourced directly)
 if __name__ == '__main__':
 
-    # Initializes a rospy node to let the SimpleActionClient publish and subscribe
-    rospy.init_node('assignment3')
+    agent_max_vel = 0.22
+    agent_id = sys.argv[2]
+    agent_max_vel = sys.argv[3]
+
     # rospy.init_node('get_map_example', anonymous=True)
 
     # rc_DWA_client = dynamic_reconfigure.client.Client("/move_base/DWAPlannerROS/")
@@ -559,21 +610,21 @@ if __name__ == '__main__':
     exec_mode = sys.argv[1]
     print('exec_mode:' + exec_mode)
 
-    agent_max_vel = 0.22
-    agent_id = sys.argv[2]
-    agent_max_vel = sys.argv[3]
-
     ms = MapService(agent_id)
 
     if exec_mode == 'cleaning':
-        vacuum_cleaning(agent_id, agent_max_vel)
+        vacuum_cleaning(agent_id, agent_max_vel, ms)
 
     elif exec_mode == 'inspection':
         # 1. assign nodes to each extreme node
         # 2. plan path to each set
         # 3. transmit the path to the other robot
         # first_pose = ms.get_first_pose(agent_id)
+
         if agent_id == '0':
+            # Initializes a rospy node to let the SimpleActionClient publish and subscribe
+            rospy.init_node('assignment3_0')
+
             first_pose = PoseWithCovarianceStamped()
             first_pose.header.frame_id = "map"
             first_pose.header.stamp = rospy.Time.now()
@@ -594,21 +645,48 @@ if __name__ == '__main__':
 
             dist_mat_0 = dist_mat_np[nodes_0,:][:,nodes_0]
             dist_mat_1 = dist_mat_np[nodes_1,:][:,nodes_1]
-            # how to slice list?
-            triangles_0 = cb.triangles[nodes_0]
-            triangles_1 = cb.triangles[nodes_1]
 
+            triangles_0 = [cb.triangles[i] for i in nodes_0]
+            triangles_1 = [cb.triangles[i] for i in nodes_1]
 
-            path0 = plan_path(extreme_nodes[0], dist_mat_0, triangles_0)
-            path1 = plan_path(extreme_nodes[1], dist_mat_1, triangles_1)
-            cb.draw_path(nodes_1)
-            cb.draw_triangles((0, 255, 0), cb.triangles)
+            path = plan_path(nodes_0.index(extreme_nodes[0]), dist_mat_0, triangles_0)
+            path1 = plan_path(nodes_1.index(extreme_nodes[1]), dist_mat_1, triangles_1)
+
+            # send path
+            poses_server = SendPosesServer(path1)
+
+            cb.draw_path(path, green=255)
+            cb.draw_triangles((0, 0, 255), cb.triangles)
+
+            triangles_centers = []
+            for tri in path:
+                c = tri.center
+                triangles_centers.append(np.array((c[0], c[1], 0)))
+
         else:
+            rospy.init_node('assignment3_1')
+
             first_pose = PoseWithCovarianceStamped()
             first_pose.header.frame_id = "map"
             first_pose.header.stamp = rospy.Time.now()
             first_pose.pose.pose.position.x = 1.0
 
+            # read path
+            path = get_poses_client().position
+
+            triangles_centers = []
+            for i in range(0,len(path), 2):
+                triangles_centers.append(np.array((path[i], path[i+1], 0)))
+            # cb.draw_path(path1, green=0)
+            # cb.draw_triangles((0, 0, 255), cb.triangles)
+
+        print("triangles_centers:", triangles_centers)
+
+        # Path planning
+        # path_finder = Path_finder(robot_width=robot_width, error_gap=error_gap, divide_walk_every=20.0)
+        # borders, path = path_finder.find_inspection(triangles=triangles)
+        # path.insert(0, {"position": (first_pose[0], first_pose[1], 0.0), "angle": first_angle})
+        # print("Done creating the path. Length:", len(path))
 
         inspection(agent_id, agent_max_vel)
     else:

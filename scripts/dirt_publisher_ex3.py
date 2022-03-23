@@ -17,7 +17,7 @@ class DirtPublisher:
         self.dirt_pieces = dirt_pieces
         self.odom_subsribers = []
         self.num_of_agents = num_of_agents
-        # initialize the array with zeros (numpy zeros)
+        # initialize the array with zeros (numpy zeros)msr
         self.collected_per_agent = np.zeros(num_of_agents)
 
         for i in range(0, self.num_of_agents):
