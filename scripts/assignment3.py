@@ -278,7 +278,7 @@ class DecisionMaking():
 
     def update_advisory_to_goal_map(self, x, y, z, our_agent_location, advisory_agent_location, advisory_agent_goal, number_of_points, aggression):
         if advisory_agent_goal is not None:
-            if (self.dirt_piece_diameter < np.linalg.norm(np.array(our_agent_location) - np.array(advisory_agent_goal))):
+            if ((self.dirt_piece_diameter * 6.0) < np.linalg.norm(np.array(our_agent_location) - np.array(advisory_agent_goal))):
                 if advisory_agent_location is None:
                     sigma_x   = self.dirt_piece_diameter
                     sigma_y   = self.dirt_piece_diameter
@@ -327,7 +327,8 @@ class DecisionMaking():
         for i in range(x.shape[0]):
             for j in range(x.shape[1]):
                 distance = np.linalg.norm(np.array(((float(j) / self.resolution[1]), (float(i) / self.resolution[0]))) - our_agent_location)
-                if distance < self.dirt_piece_radius:
+                if distance < self.dirt_piece_diameter:
+                # if distance < self.dirt_piece_radius:
                     z[i][j] = 0.0
                 else:
                     z[i][j] += (z_max * (1.0 - (distance / max_distance)))
@@ -1456,9 +1457,7 @@ class AdvisoryGoalService(object):
         self.sub_PoseStamped = rospy.Subscriber('tb3_%d/move_base/current_goal' % int(self.ag), PoseStamped, self.advisory_goal_cb)
 
     def advisory_goal_cb(self, msg):
-        # print("advisory_goal_cb()")
         self.advisory_goal = self.ms.position_to_map(np.array((msg.pose.position.x, msg.pose.position.y)))
-        # print("advisory_goal_cb() end")
 
     def unregister(self):
         self.sub_PoseStamped.unregister()
@@ -1495,9 +1494,104 @@ class DirtPiecesService(object):
     def unregister(self):
         self.sub_String.unregister()
 
+class DecisionMakingTimer():
+    def __init__(self, t, decisionMaking, dirtPiecesService, advisoryGoalService, our_agent_location, agentPositionService, aggression):
+        self.finished                         = False
+        self.t                                = t
+        self.decisionMaking                   = decisionMaking
+        self.dirtPiecesService                = dirtPiecesService
+        self.advisoryGoalService              = advisoryGoalService
+        self.our_agent_location               = our_agent_location
+        self.agentPositionService             = agentPositionService
+        self.aggression                       = aggression
+        self.client                           = actionlib.SimpleActionClient('tb3_%d/move_base' % 0, MoveBaseAction)
+        self.client.wait_for_server()
+        self.thread                           = Timer(self.t, self.handle_function, [])
+        self.prev_dirt_pieces_locations_len   = None
+        self.prev_our_agent_location          = None
+        self.prev_advisory_agent_location     = None
+        self.prev_current_advisory_agent_goal = None
+        self.first_iteration                  = True
+
+    def handle_function(self, *args):
+        should_continue = self.run()
+        if should_continue:
+            self.thread = Timer(self.t, self.handle_function, [])
+            self.thread.start()
+
+    def run(self):
+        if self.dirtPiecesService.coordinates_list is not None:
+            if not self.dirtPiecesService.coordinates_list:
+                self.cancel()
+                return False
+            if self.first_iteration:
+                self.prev_dirt_pieces_locations_len   = len(self.dirtPiecesService.coordinates_list)
+                self.prev_our_agent_location          = self.our_agent_location
+                self.prev_advisory_agent_location     = None  # (165.0, 165.0)
+                self.prev_current_advisory_agent_goal = self.advisoryGoalService.advisory_goal # (200.0, 125.0)
+            else:
+                self.agentPositionService.receive_agent_pose()
+                self.our_agent_location = self.agentPositionService.agent_0_position
+            if ((len(self.dirtPiecesService.coordinates_list) != self.prev_dirt_pieces_locations_len) or
+                    (tuple(self.our_agent_location)           != tuple(self.prev_our_agent_location)) or
+                    (((self.advisoryGoalService.advisory_goal is not None) and (self.prev_current_advisory_agent_goal is not None)) and (tuple(self.advisoryGoalService.advisory_goal) != tuple(self.prev_current_advisory_agent_goal))) or
+                    self.first_iteration                                                              ):
+                self.first_iteration                  = False
+                self.prev_dirt_pieces_locations_len   = len(self.dirtPiecesService.coordinates_list)
+                self.prev_our_agent_location          = self.our_agent_location
+                self.prev_advisory_agent_location     = None  # (165.0, 165.0)
+                self.prev_current_advisory_agent_goal = self.advisoryGoalService.advisory_goal # (200.0, 125.0)
+                new_goal_map                          = self.decisionMaking.calculate_new_goal(dirt_pieces_locations=self.dirtPiecesService.coordinates_list, our_agent_location=self.prev_our_agent_location, advisory_agent_location=self.prev_advisory_agent_location, advisory_agent_goal=self.prev_current_advisory_agent_goal, aggression=self.aggression)
+                new_goal_position                     = ms.map_to_position(np.array((new_goal_map[0], new_goal_map[1])))
+                try:
+                    self.client.cancel_goal()
+                    result = self.our_move(agent_id=int(agent_id), x=new_goal_position[0], y=new_goal_position[1])
+                    # result = multi_move_base.move(agent_id=int(agent_id), x=new_goal_position[0], y=new_goal_position[1])
+                    if result:
+                        rospy.loginfo("Goal execution done!")
+                except rospy.ROSInterruptException:
+                    rospy.loginfo("Navigation Exception.")
+                # self.our_agent_location = new_goal_map
+        return True
+
+    def our_movebase_client(self, agent_id=0, x=1.0, y=0.5, w=1.0):
+        # print("Sending goal")
+        # Creates a new goal with the MoveBaseGoal constructor
+        goal = MoveBaseGoal()
+        goal.target_pose.header.frame_id = "map"
+        goal.target_pose.header.stamp = rospy.Time.now()
+        # Move 0.5 meters forward along the x axis of the "map" coordinate frame
+        goal.target_pose.pose.position.x = x
+        goal.target_pose.pose.position.y = y
+        # No rotation of the mobile base frame w.r.t. map frame
+        goal.target_pose.pose.orientation.w = w
+        # Sends the goal to the action server.
+        self.client.send_goal(goal)
+        # print("Sent goal")
+
+    def our_move(self, agent_id=0, x=1.0, y=0.5, w=1.0):
+        try:
+            result = self.our_movebase_client(agent_id, x, y, w)
+            if result:
+                rospy.loginfo("Goal execution done!")
+            else:
+                rospy.loginfo("Goal unachievable!")
+            return result
+        except rospy.ROSInterruptException:
+            rospy.loginfo("Navigation test finished.")
+
+    def start(self):
+        self.thread.start()
+
+    def cancel(self):
+        self.finished = True
+        self.thread.cancel()
+        self.dirtPiecesService  .unregister()
+        self.advisoryGoalService.unregister()
+        # rospy.signal_shutdown("BYE")
 
 # noinspection PyTypeChecker,PyUnresolvedReferences
-def vacuum_cleaning(ms, agent_id, robot_width, error_gap):
+def vacuum_cleaning(ms, agent_id, robot_width, error_gap, dirt_piece_radius):
     print('Starting vacuum_cleaning()')
 
     rc_DWA_client = dynamic_reconfigure.client.Client('tb3_%d/move_base/DWAPlannerROS' % int(agent_id))
@@ -1507,9 +1601,8 @@ def vacuum_cleaning(ms, agent_id, robot_width, error_gap):
 
     # plot                    = True
     plot                    = False
-    save_to_file            = True
-    # save_to_file            = False
-    dirt_piece_radius       = 0.5
+    # save_to_file            = True
+    save_to_file            = False
     occupancy_map           = ms.map_arr
     map_top_left            = (0, 0)
     map_bottom_right        = (occupancy_map.shape[1], occupancy_map.shape[0])
@@ -1517,35 +1610,17 @@ def vacuum_cleaning(ms, agent_id, robot_width, error_gap):
     aggression              = 1.0  ### 0.0 = Ignore advisory. 1.0 = Normal aggression. The higher = The more our agent tries to block the advisory.
     decisionMaking          = DecisionMaking(occupancy_map=occupancy_map, map_top_left=map_top_left, map_bottom_right=map_bottom_right, resolution=resolution, dirt_piece_radius=dirt_piece_radius, save_plot_folder="plots", plot=plot, save_to_file=save_to_file)
     dirtPiecesService       = DirtPiecesService(ms=ms)
-    advisoryGoalService     = AdvisoryGoalService(ms=ms, ag=agent_id)
-    r                       = rospy.Rate(0.1)
+    advisoryGoalService     = AdvisoryGoalService(ms=ms, ag=1)
+    agentPositionService    = AgentPositionService(ms=ms)
     first_pose, first_angle = ms.get_first_pose()
     our_agent_location      = first_pose # (125.0, 125.0)
+    r                       = rospy.Rate(10)
 
-    def unregister():
-        dirtPiecesService  .unregister()
-        advisoryGoalService.unregister()
-        # rospy.signal_shutdown("BYEEE")
+    t = DecisionMakingTimer(0.0001, decisionMaking, dirtPiecesService, advisoryGoalService, our_agent_location, agentPositionService, aggression)
+    t.start()
 
-    while not rospy.is_shutdown():
+    while not t.finished:
         r.sleep()
-        if dirtPiecesService.coordinates_list is None:
-            continue
-        if not dirtPiecesService.coordinates_list:
-            unregister()
-            break
-        advisory_agent_location     = None # (165.0, 165.0)
-        current_advisory_agent_goal = advisoryGoalService.advisory_goal # (200.0, 125.0)
-        new_goal_map                = decisionMaking.calculate_new_goal(dirt_pieces_locations=dirtPiecesService.coordinates_list, our_agent_location=our_agent_location, advisory_agent_location=advisory_agent_location, advisory_agent_goal=current_advisory_agent_goal, aggression=aggression)
-        new_goal_position           = ms.map_to_position(np.array((new_goal_map[0], new_goal_map[1])))
-        try:
-            result = multi_move_base.move(agent_id=int(agent_id), x=new_goal_position[0], y=new_goal_position[1])
-            if result:
-                rospy.loginfo("Goal execution done!")
-        except rospy.ROSInterruptException:
-            rospy.loginfo("Navigation Exception.")
-        our_agent_location = new_goal_map
-
 
 ### INSPECTION ###
 
@@ -1852,20 +1927,20 @@ class InspectionCostmapUpdater:
             plt.show()
             plt.clf()
 
-def create_surrounding_sphere(map_service, surround_times, radius):
-    surrounding_sphere = np.empty(shape=(surround_times, 3))
-    one_time_angle     = (np.pi * 2.0) / surround_times
-    # base_vector        = map_service.map_to_position(np.array((radius, 0.0)))
-    # base_vector        = np.array((base_vector[0], base_vector[1], 0.0))
-    base_vector        = np.array((radius, 0.0, 0.0))
-    for i in range(surround_times):
-        angle_radian            = one_time_angle * i
-        rotation_matrix         = R.from_euler('z', angle_radian, degrees=False)
-        rotated_vector          = rotation_matrix.apply(base_vector)
-        # rotated_vector_position = map_service.map_to_position(np.array((rotated_vector[0], rotated_vector[1])))
-        # surrounding_sphere[i]   = np.array((rotated_vector_position[0], rotated_vector_position[1], 0.0))
-        surrounding_sphere[i]   = rotated_vector
-    return surrounding_sphere
+# def create_surrounding_sphere(map_service, surround_times, radius):
+#     surrounding_sphere = np.empty(shape=(surround_times, 3))
+#     one_time_angle     = (np.pi * 2.0) / surround_times
+#     # base_vector        = map_service.map_to_position(np.array((radius, 0.0)))
+#     # base_vector        = np.array((base_vector[0], base_vector[1], 0.0))
+#     base_vector        = np.array((radius, 0.0, 0.0))
+#     for i in range(surround_times):
+#         angle_radian            = one_time_angle * i
+#         rotation_matrix         = R.from_euler('z', angle_radian, degrees=False)
+#         rotated_vector          = rotation_matrix.apply(base_vector)
+#         # rotated_vector_position = map_service.map_to_position(np.array((rotated_vector[0], rotated_vector[1])))
+#         # surrounding_sphere[i]   = np.array((rotated_vector_position[0], rotated_vector_position[1], 0.0))
+#         surrounding_sphere[i]   = rotated_vector
+#     return surrounding_sphere
 
 def save_image_map_with_path(map_service, path):
     global current_path_index
@@ -2430,10 +2505,11 @@ def inspection(ms, agent_id, agent_max_vel, robot_width, error_gap, spheres_diam
 
 
 if __name__ == '__main__':
-    robot_width      = 5.0
-    error_gap        = 0.15
-    spheres_diameter = 20.0
-    # spheres_diameter = 5.0
+    robot_width       = 5.0
+    error_gap         = 0.15
+    dirt_piece_radius = 0.5
+    spheres_diameter  = 20.0
+    # spheres_diameter  = 5.0
 
     # Initializes a rospy node to let the SimpleActionClient publish and subscribe
     # rospy.init_node('assignment3') # rospy.init_node('get_map_example')
@@ -2471,8 +2547,8 @@ if __name__ == '__main__':
             dc = DummyCleaner(ms=ms, id=agent_id)
             dc.run()
         else:
-            vacuum_cleaning(ms=ms, agent_id=agent_id, robot_width=robot_width, error_gap=error_gap)
-        # vacuum_cleaning(ms=ms, agent_id=agent_id, robot_width=robot_width, error_gap=error_gap)
+            vacuum_cleaning(ms=ms, agent_id=agent_id, robot_width=robot_width, error_gap=error_gap, dirt_piece_radius=dirt_piece_radius)
+        # vacuum_cleaning(ms=ms, agent_id=agent_id, robot_width=robot_width, error_gap=error_gap, dirt_piece_radius=dirt_piece_radius)
     elif exec_mode == 'inspection':
         agent_max_vel = sys.argv[3]
         # agent_max_vel = str(configurations["max_vel_x"])
@@ -2482,7 +2558,6 @@ if __name__ == '__main__':
     else:
         print("ERROR: exec_mode not found")
         raise NotImplementedError
-
     ms.unregister()
 
     ##### Gridsearch for the corners detection algorithm's parameters
