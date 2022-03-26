@@ -1386,6 +1386,55 @@ def plot_path(borders, path, plot, save_to_file):
         if plot:
             plt.show()
 
+class DummyCleaner:
+
+    def __init__(self, ms, id):
+
+        first_pose, first_angle = ms.get_first_pose()
+        pose = ms.map_to_position(first_pose)
+        self.pose_x = pose[0]
+        self.pose_y = pose[1]
+        self.odomSub = rospy.Subscriber('/tb3_%d/odom' % 1, Odometry, self.update_dirt_status)
+        self.dirtPieces = DirtPiecesService(ms=ms)
+
+        rc_DWA_client = dynamic_reconfigure.client.Client('tb3_%d/move_base/DWAPlannerROS' % int(id))
+        rc_DWA_client.update_configuration({"max_vel_x": "0.22"})
+        rc_DWA_client.update_configuration({"yaw_goal_tolerance": "inf"})
+        rc_DWA_client.update_configuration({"xy_goal_tolerance": "0.25"})
+
+    def update_dirt_status(self, msg):
+        # parsed_id = (msg.header.frame_id.replace('tb3_', '')).replace('/odom', '')
+        # agent_id = int(parsed_id)
+        self.pose_x = msg.pose.pose.position.x
+        self.pose_y = msg.pose.pose.position.y
+
+    def run(self):
+        while not rospy.is_shutdown():
+            if self.dirtPieces.coordinates_list is None:
+                time.sleep(1)
+                print("waiting for dirt pieces")
+                continue
+            if not self.dirtPieces.coordinates_list:
+                self.dirtPieces.unregister()
+                self.odomSub.unregister()
+                break
+            closest_dirt = None
+            min_dist = np.Inf
+            for cur_dirt in self.dirtPieces.coordinates_list:
+                d = ms.map_to_position(cur_dirt)
+                # euclidean distance
+                dist = math.pow((d[0] - self.pose_x), 2) + math.pow((d[1] - self.pose_y), 2)
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_dirt = d
+
+            try:
+                result = multi_move_base.move(agent_id=int(agent_id), x=closest_dirt[0], y=closest_dirt[1])
+                if result:
+                    rospy.loginfo("Goal execution done!")
+            except rospy.ROSInterruptException:
+                rospy.loginfo("Navigation Exception.")
+
 def move_robot_on_path_cleaning(map_service, path):
     try:
        # Initializes a rospy node to let the SimpleActionClient publish and subscribe
@@ -1428,7 +1477,10 @@ class DirtPiecesService(object):
     def dirtCb(self, msg):
         # print("dirtCb()")
         # print(msg)
-        msg_list                 = msg.data.split("][")
+        # First batch is send as tuples, so if there are any '()' replace with '[]'
+        new_string               = msg.data.replace(')', ']').replace('(', '[')
+        msg_list                 = new_string.split("][")
+        # msg_list                 = msg.data.split("][")
         msg_list[0]              = msg_list[0][1:]
         msg_list[-1]             = msg_list[-1][:-1]
         current_coordinates_list = []
@@ -1450,6 +1502,8 @@ def vacuum_cleaning(ms, agent_id, robot_width, error_gap):
 
     rc_DWA_client = dynamic_reconfigure.client.Client('tb3_%d/move_base/DWAPlannerROS' % int(agent_id))
     rc_DWA_client.update_configuration({"max_vel_x": "0.22"})
+    rc_DWA_client.update_configuration({"yaw_goal_tolerance": "inf"})
+    rc_DWA_client.update_configuration({"xy_goal_tolerance": "0.25"})
 
     # plot                    = True
     plot                    = False
@@ -1490,19 +1544,19 @@ def vacuum_cleaning(ms, agent_id, robot_width, error_gap):
                 rospy.loginfo("Goal execution done!")
         except rospy.ROSInterruptException:
             rospy.loginfo("Navigation Exception.")
-        our_agent_location       = new_goal_map
+        our_agent_location = new_goal_map
 
 
 ### INSPECTION ###
 
-path_folder_name                                 = "paths"
-suspicious_points_map_folder_name                = "suspicious_points_maps"
-found_circles_maps_folder_name                   = "found_circles_maps"
-differences_maps_folder_name                     = "differences_maps"
-differences_maps_process_folder_name             = "differences_maps_process"
-current_path_index                               = 0
-current_maps_index                               = 0
-differences_map_index                            = 0
+path_folder_name                     = "paths"
+suspicious_points_map_folder_name    = "suspicious_points_maps"
+found_circles_maps_folder_name       = "found_circles_maps"
+differences_maps_folder_name         = "differences_maps"
+differences_maps_process_folder_name = "differences_maps_process"
+current_path_index                   = 0
+current_maps_index                   = 0
+differences_map_index                = 0
 
 class AgentPositionService:
     def __init__(self, ms):
@@ -1524,7 +1578,7 @@ class AgentPositionService:
         except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
             print("EXCEPTION: receive_agent_pose")
 
-class AgentPositionTimer():
+class AgentPositionTimer:
     def __init__(self, t, hFunction):
         self.t = t
         self.hFunction = hFunction
@@ -1542,7 +1596,8 @@ class AgentPositionTimer():
         self.thread.cancel()
 
 class InspectionCostmapUpdater:
-    def __init__(self, occ_map, agent_id, spheres_filter_size, sparsity):
+    def __init__(self, occ_map, agent_id, spheres_diameter, spheres_filter_size, sparsity):
+        self.spheres_diameter                       = spheres_diameter
         self.spheres_filter_size                    = spheres_filter_size # Odd number
         self.sparsity                               = sparsity
         self.occ_map_original                       = occ_map
@@ -1587,9 +1642,10 @@ class InspectionCostmapUpdater:
         result = []
         self.calculate_differences_map()
         if self.differences_map is not None:
-            suspicious_points_map = np.zeros(shape=self.differences_map.shape)
-            height                = self.differences_map.shape[0]
-            width                 = self.differences_map.shape[1]
+            differences_map       = copy.deepcopy(self.differences_map)
+            suspicious_points_map = np.zeros(shape=differences_map.shape)
+            height                = differences_map.shape[0]
+            width                 = differences_map.shape[1]
             half_filter           = int(self.spheres_filter_size / 2.0)
             for i in range(0, height, self.sparsity):
                 for j in range(0, width, self.sparsity):
@@ -1599,7 +1655,7 @@ class InspectionCostmapUpdater:
                     for k in range(self.spheres_filter_size):
                         for l in range(self.spheres_filter_size):
                             if ((0 <= (i_ + k) < height) and (0 <= (j_ + l) < width)):
-                                sum += self.differences_map[i_ + k][j_ + l]
+                                sum += differences_map[i_ + k][j_ + l]
                     suspicious_points_map[i][j] = sum
 
             max_filter_map = None
@@ -1652,13 +1708,6 @@ class InspectionCostmapUpdater:
             for i in range(len(suspicious_coorinations_to_keep)):
                 current_suspicious_coorination       = suspicious_coorinations_to_keep[i]
                 current_suspicious_coorination_array = np.array((current_suspicious_coorination[0][1], current_suspicious_coorination[0][0]))
-                # if self.agent_id_int == 0:
-                #     print("agent_1_position")
-                # else:
-                #     print("agent_0_position")
-                # print(other_agent_position)
-                # print("current_suspicious_coorination_array")
-                # print(current_suspicious_coorination_array)
                 if radius_from_other_agent_position < np.linalg.norm(other_agent_position - current_suspicious_coorination_array):
                     suspicious_coorinations_without_other_agent.append(current_suspicious_coorination)
 
@@ -1689,94 +1738,91 @@ class InspectionCostmapUpdater:
                 plt.clf()
                 current_maps_index += 1
 
-        # print(result)
         return result
 
-    def calculate_number_of_circles_in_map(self, agentPositionService, save_plot_to_file):
-        global found_circles_maps_folder_name
+    def detect_spheres(self, agentPositionService):
         global differences_maps_folder_name
-        global differences_maps_process_folder_name
         global differences_map_index
-        current_found_circles_map_file       = os.path.join(found_circles_maps_folder_name      , str(differences_map_index) + ".png")
-        current_differences_map_file         = os.path.join(differences_maps_folder_name        , str(differences_map_index) + ".png")
-        current_differences_map_process_file = os.path.join(differences_maps_process_folder_name, str(differences_map_index) + ".png")
+        current_differences_map_file = os.path.join(differences_maps_folder_name, str(differences_map_index) + ".png")
+        result                       = None
         self.calculate_differences_map()
-        plt.imshow(self.differences_map)
-        plt.savefig(current_differences_map_file)
-        plt.clf()
-
-        # Loads an image
-        src = cv.imread(cv.samples.findFile(current_differences_map_file), cv.IMREAD_COLOR)
-        if src is None: # Check if image is loaded fine
-            print ('Error opening image!')
-            print ('Usage: hough_circle.py [image_name -- default ' + current_differences_map_file + '] \n')
-            return -1
-        gray    = cv.cvtColor(src, cv.COLOR_BGR2GRAY)
-        gray    = cv.medianBlur(gray, 5)
-        # plt.imshow(gray)
-        # plt.show()
-        rows    = gray.shape[0]
-        circles = cv.HoughCircles(gray, cv.HOUGH_GRADIENT, 1, rows / 16,#/ 8
-                                  param1=100, param2=9,
-                                  # param1=100, param2=30,
-                                  minRadius=9, maxRadius=21)
-                                  # minRadius=1, maxRadius=30)
-        if circles is not None:
-            agent_0_position                 = np.array(agentPositionService.agent_0_position)
-            agent_1_position                 = np.array(agentPositionService.agent_1_position)
-            radius_from_other_agent_position = ((float(robot_width) * (1.0 + float(error_gap))) / 2.0)
-            circles_not_agents               = []
-            print("circles.shape")
-            print(circles.shape)
-            for i in circles[0, :]:
-                center              = (i[0], i[1])
-                circle_center_array = np.array((center[1], center[0]))
-                # if self.agent_id_int == 0:
-                #     print("agent_1_position")
-                # else:
-                #     print("agent_0_position")
-                # print(other_agent_position)
-                # print("current_suspicious_coorination_array")
-                # print(current_suspicious_coorination_array)
-                if ((radius_from_other_agent_position < np.linalg.norm(agent_0_position - circle_center_array)) and
-                        (radius_from_other_agent_position < np.linalg.norm(agent_1_position - circle_center_array))):
-                    circles_not_agents.append(i)
-
-            circles = np.uint16(np.around(circles))
-            if save_plot_to_file:
-                for i in circles[0, :]:
-                    center = (i[0], i[1])
-                    cv.circle(src, center, 1, (0, 100, 100), 3) # circle center
-                    radius = i[2] # circle outline
-                    cv.circle(src, center, radius, (255, 0, 255), 3)
-                # cv.imshow("detected circles" + str(len(circles)), src)
-                # cv.waitKey(0)
-                cv.imwrite(current_found_circles_map_file, src)
-            result = len(circles[0])
-        else:
-            result = 0 # Detected 0 circles
-
-        if save_plot_to_file:
-            if 0 < result:
-                found_circles_map = cv.imread(current_found_circles_map_file)
-            else:
-                found_circles_map = self.differences_map
-            fig, axs          = plt.subplots(2, 3)
-            images            = [self.occ_map_original, self.cost_map, self.differences_map,
-                                 self.occ_map_binary_dilation, self.cost_map_binary, found_circles_map]
-            images_titles     = ["occ", "cost", "differences",
-                                 "occ_binary_dilation", "cost_filtered_binary", "found_circles"]
-            for i, ax in enumerate(axs.flatten()):
-                if i < len(images):
-                    ax.set_title(images_titles[i])
-                    ax.imshow(images[i])
-                else:
-                    ax.remove()
-            # plt.show()
-            plt.savefig(current_differences_map_process_file)
+        if self.differences_map is not None:
+            differences_map = copy.deepcopy(self.differences_map)
+            plt.clf()
+            plt.imshow(differences_map)
+            plt.savefig(current_differences_map_file)
             plt.clf()
 
-        differences_map_index += 1
+            # Loads an image
+            src = cv.imread(cv.samples.findFile(current_differences_map_file), cv.IMREAD_COLOR)
+            if src is None: # Check if image is loaded fine
+                print ('Error opening image!')
+                print ('Usage: hough_circle.py [image_name -- default ' + current_differences_map_file + '] \n')
+                return -1
+            gray    = cv.cvtColor(src, cv.COLOR_BGR2GRAY)
+            gray    = cv.medianBlur(gray, 5)
+            # plt.imshow(gray)
+            # plt.show()
+            rows    = gray.shape[0]
+            circles = cv.HoughCircles(gray, cv.HOUGH_GRADIENT, 1, rows / 16,#/ 8
+                                      param1=100, param2=9,# param1=100, param2=30,
+                                      minRadius=9, maxRadius=21)# minRadius=1, maxRadius=30)
+            if circles is not None:
+                agent_0_position                 = np.array(agentPositionService.agent_0_position)
+                agent_1_position                 = np.array(agentPositionService.agent_1_position)
+                radius_from_other_agent_position = ((self.spheres_diameter + float(robot_width) * (1.0 + float(error_gap))) / 2.0)
+                circles_not_agents_indices       = []
+                index                            = 0
+                for i in circles[0, :]:
+                    center              = (i[0], i[1])
+                    circle_center_array = np.array((center[1], center[0]))
+                    if ((radius_from_other_agent_position < np.linalg.norm(agent_0_position - circle_center_array)) and
+                            (radius_from_other_agent_position < np.linalg.norm(agent_1_position - circle_center_array))):
+                        circles_not_agents_indices.append(index)
+                    index += 1
+                new_circles = np.empty(shape=(circles.shape[0], len(circles_not_agents_indices), circles.shape[2]))
+                for i in range(len(circles_not_agents_indices)):
+                    new_circles[0][i] = circles[0][circles_not_agents_indices[i]]
+                circles = new_circles
+                circles = np.uint16(np.around(circles))
+                list_of_circles_centers = []
+                for i in circles[0, :]:
+                    center = (i[0], i[1])
+                    radius = i[2]  # circle outline
+                    list_of_circles_centers.append((center, radius))
+                # if save_plot_to_file:
+                #     for i in circles[0, :]:
+                #         center = (i[0], i[1])
+                #         cv.circle(src, center, 1, (0, 100, 100), 3) # circle center
+                #         radius = i[2] # circle outline
+                #         cv.circle(src, center, radius, (255, 0, 255), 3)
+                #     # cv.imshow("detected circles" + str(len(circles)), src)
+                #     # cv.waitKey(0)
+                #     cv.imwrite(current_found_circles_map_file, src)
+                # result = len(circles[0])
+                result = list_of_circles_centers
+
+            # if save_plot_to_file:
+            #     # if 0 < result:
+            #     if result is not None:
+            #         found_circles_map = cv.imread(current_found_circles_map_file)
+            #     else:
+            #         found_circles_map = self.differences_map
+            #     fig, axs          = plt.subplots(2, 3)
+            #     images            = [self.occ_map_original, self.cost_map, self.differences_map,
+            #                          self.occ_map_binary_dilation, self.cost_map_binary, found_circles_map]
+            #     images_titles     = ["occ", "cost", "differences",
+            #                          "occ_binary_dilation", "cost_filtered_binary", "found_circles"]
+            #     for i, ax in enumerate(axs.flatten()):
+            #         if i < len(images):
+            #             ax.set_title(images_titles[i])
+            #             ax.imshow(images[i])
+            #         else:
+            #             ax.remove()
+            #     # plt.show()
+            #     plt.savefig(current_differences_map_process_file)
+            #     plt.clf()
+
         return result
 
     def binary_dilation(self, map, iterations1, iterations2):
@@ -1843,21 +1889,27 @@ def save_image_map_with_path(map_service, path):
     plt.clf()
     current_path_index += 1
 
-class perpetualTimer():
-    def __init__(self, t, hFunction, pub, icmu, agentPositionService, save_number_of_circles_in_map):
-        self.start_time = rospy.Time.now() #time.time()
-        self.t = t
-        self.hFunction = hFunction
-        self.thread = Timer(self.t, self.handle_function, [pub, icmu, agentPositionService, save_number_of_circles_in_map, self.start_time])
+class Agent1SpheresTimer():
+    def __init__(self, t, hFunction, pub, icmu, agentPositionService):
+        self.start_time        = rospy.Time.now() #time.time()
+        self.pub               = pub
+        self.t                 = t
+        self.hFunction         = hFunction
+        self.thread            = Timer(self.t, self.handle_function, [icmu, agentPositionService])
 
     def handle_function(self, *args):
-        pub                           = args[0]
-        icmu                          = args[1]
-        agentPositionService          = args[2]
-        save_number_of_circles_in_map = args[3]
-        self.hFunction(pub, icmu, save_number_of_circles_in_map, self.start_time)
-        self.thread = Timer(self.t, self.handle_function, [pub, icmu, agentPositionService, save_number_of_circles_in_map, self.start_time])
+        icmu                          = args[0]
+        agentPositionService          = args[1]
+        self.run_and_publish(icmu, agentPositionService)
+        self.thread = Timer(self.t, self.handle_function, [icmu, agentPositionService])
         self.thread.start()
+
+    def run_and_publish(self, icmu, agentPositionService):
+        global differences_map_index
+        list_of_detected_spheres       = self.hFunction(icmu, agentPositionService)
+        differences_map_index         += 1
+        pickle_list_of_circles_centers = pickle.dumps(list_of_detected_spheres)
+        self.pub.publish(pickle_list_of_circles_centers)
 
     def start(self):
         self.thread.start()
@@ -1865,12 +1917,112 @@ class perpetualTimer():
     def cancel(self):
         self.thread.cancel()
 
-def calculate_number_of_circles_in_map(pub, icmu, agentPositionService, save_number_of_circles_in_map, start_time):
-    number_of_circles = icmu.calculate_number_of_circles_in_map(agentPositionService=agentPositionService, save_plot_to_file=save_number_of_circles_in_map)
-    ts                = (rospy.Time.now() - start_time) #time.time()
-    report_string_msg = "{X} spheres detected at time {TIMESTAMP}".format(X=number_of_circles, TIMESTAMP=ts)
-    pub.publish(report_string_msg)
-    print      (report_string_msg)
+list_of_detected_spheres_agent_1 = None
+
+class Agent0SpheresTimer():
+    def __init__(self, t, hFunction, minimum_distance_between_spheres_centers, pub, icmu, agentPositionService, save_number_of_circles_in_map):
+        self.start_time                               = rospy.Time.now() #time.time()
+        self.pub                                      = pub
+        self.t                                        = t
+        self.hFunction                                = hFunction
+        self.minimum_distance_between_spheres_centers = minimum_distance_between_spheres_centers
+        self.thread                                   = Timer(self.t, self.handle_function, [icmu, agentPositionService, save_number_of_circles_in_map])
+        self.number_of_circles                        = None
+
+    def handle_function(self, *args):
+        icmu                          = args[0]
+        agentPositionService          = args[1]
+        save_number_of_circles_in_map = args[2]
+        self.run_and_publish(icmu, agentPositionService, save_number_of_circles_in_map)
+        self.thread = Timer(self.t, self.handle_function, [icmu, agentPositionService, save_number_of_circles_in_map])
+        self.thread.start()
+
+    # noinspection PyTypeChecker,PyUnresolvedReferences
+    def run_and_publish(self, icmu, agentPositionService, save_number_of_spheres_in_map):
+        global list_of_detected_spheres_agent_1
+        global found_circles_maps_folder_name
+        global differences_maps_process_folder_name
+        global differences_maps_folder_name
+        global differences_map_index
+        list_of_detected_spheres_        = []
+        list_of_detected_spheres_agent_0 = self.hFunction(icmu, agentPositionService)
+        if list_of_detected_spheres_agent_0 is not None:
+            for i in range(len(list_of_detected_spheres_agent_0)):
+                list_of_detected_spheres_.append(list_of_detected_spheres_agent_0[i])
+        if list_of_detected_spheres_agent_1 is not None:
+            duplicate_spheres_centers_indices = []
+            if list_of_detected_spheres_agent_0 is not None:
+                for i in range(len(list_of_detected_spheres_agent_1)):
+                    current_sphere_center_agent_1 = np.array(list_of_detected_spheres_agent_1[i][0])
+                    for j in range(len(list_of_detected_spheres_agent_0)):
+                        current_sphere_center_agent_0 = np.array(list_of_detected_spheres_agent_0[j][0])
+                        if np.linalg.norm(current_sphere_center_agent_0 - current_sphere_center_agent_1) < self.minimum_distance_between_spheres_centers:
+                            duplicate_spheres_centers_indices.append(i)
+            for i in range(len(list_of_detected_spheres_agent_1)):
+                if i not in duplicate_spheres_centers_indices:
+                    list_of_detected_spheres_.append(list_of_detected_spheres_agent_1[i])
+
+        # list_of_detected_spheres = list_of_detected_spheres_
+        list_of_detected_spheres          = []
+        duplicate_spheres_centers_indices = []
+        for i in range(len(list_of_detected_spheres)):
+            current_sphere_center_1 = np.array(list_of_detected_spheres_[i][0])
+            for j in range((i + 1), len(list_of_detected_spheres_)):
+                current_sphere_center_0 = np.array(list_of_detected_spheres_[j][0])
+                if np.linalg.norm(current_sphere_center_0 - current_sphere_center_1) < self.minimum_distance_between_spheres_centers:
+                    duplicate_spheres_centers_indices.append(i)
+        for i in range(len(list_of_detected_spheres_)):
+            if i not in duplicate_spheres_centers_indices:
+                list_of_detected_spheres.append(list_of_detected_spheres_[i])
+
+        if save_number_of_spheres_in_map:
+            current_found_circles_map_file       = os.path.join(found_circles_maps_folder_name      , str(differences_map_index) + ".png")
+            current_differences_map_process_file = os.path.join(differences_maps_process_folder_name, str(differences_map_index) + ".png")
+            current_differences_map_file         = os.path.join(differences_maps_folder_name        , str(differences_map_index) + ".png")
+            differences_map_index               += 1
+            src                                  = cv.imread(cv.samples.findFile(current_differences_map_file), cv.IMREAD_COLOR)
+            for i in range(len(list_of_detected_spheres)):
+                center = (list_of_detected_spheres[i][0][0], list_of_detected_spheres[i][0][1])
+                cv.circle(src, center, 1, (0, 100, 100), 3)  # circle center
+                radius = list_of_detected_spheres[i][1]  # circle outline
+                cv.circle(src, center, radius, (255, 0, 255), 3)
+                # cv.imshow("detected circles" + str(len(circles)), src)
+                # cv.waitKey(0)
+                cv.imwrite(current_found_circles_map_file, src)
+            if list_of_detected_spheres is None:
+                found_circles_map = icmu.differences_map
+            else:
+                found_circles_map = cv.imread(current_found_circles_map_file)
+            fig, axs = plt.subplots(2, 3)
+            images = [icmu.occ_map_original, icmu.cost_map, icmu.differences_map,
+                      icmu.occ_map_binary_dilation, icmu.cost_map_binary, found_circles_map]
+            images_titles = ["occ", "cost", "differences",
+                             "occ_binary_dilation", "cost_filtered_binary", "found_circles"]
+            for i, ax in enumerate(axs.flatten()):
+                if i < len(images):
+                    ax.set_title(images_titles[i])
+                    ax.imshow(images[i])
+                else:
+                    ax.remove()
+            # plt.show()
+            plt.savefig(current_differences_map_process_file)
+            plt.clf()
+
+        self.number_of_spheres = len(list_of_detected_spheres)
+        ts                     = (rospy.Time.now() - self.start_time)
+        report_string_msg      = "{X} spheres detected at time {TIMESTAMP}".format(X=self.number_of_spheres, TIMESTAMP=ts)
+        self.pub.publish(report_string_msg)
+        print(report_string_msg)
+
+    def start(self):
+        self.thread.start()
+
+    def cancel(self):
+        self.thread.cancel()
+
+def detect_spheres(icmu, agentPositionService):
+    list_of_detected_spheres = icmu.detect_spheres(agentPositionService=agentPositionService)
+    return list_of_detected_spheres
 
 def movebase_client_inspection(map_service, agent_id, path):
     result = None
@@ -1892,9 +2044,13 @@ def agent_1_finished_cb(msg):
     print("agent_1_finished_cb")
     agent_1_finished = True
 
+def inspection_report_agent_1_cb(msg):
+    global list_of_detected_spheres_agent_1
+    list_of_detected_spheres_agent_1 = pickle.loads(msg.data)
+
 suspicious_points = []
 
-def move_robot_on_path_inspection(map_service, agent_id, path, robot_width, error_gap, save_map_with_path_image, save_number_of_circles_in_map):
+def move_robot_on_path_inspection(map_service, agent_id, path, robot_width, error_gap, spheres_diameter, save_map_with_path_image, save_number_of_circles_in_map):
     global agent_1_finished
     global suspicious_points
     global sub_agent_1_finished
@@ -1906,7 +2062,26 @@ def move_robot_on_path_inspection(map_service, agent_id, path, robot_width, erro
     filter_diagonal     = (2.0 * (spheres_filter_size ** 2.0)) ** 0.5
     # surrounding_sphere  = create_surrounding_sphere(map_service=map_service, surround_times=surround_times, radius=spheres_filter_size)
     # surrounding_sphere  = create_surrounding_sphere(map_service=map_service, surround_times=surround_times, radius=((filter_diagonal / 2.0) + (2.0 * sparsity) + (robot_width * (1.0 + error_gap))))
-    icmu                = InspectionCostmapUpdater(occ_map=map_service.map_arr, agent_id=agent_id, spheres_filter_size=spheres_filter_size, sparsity=sparsity)
+    icmu                = InspectionCostmapUpdater(occ_map=map_service.map_arr, agent_id=agent_id, spheres_diameter=spheres_diameter, spheres_filter_size=spheres_filter_size, sparsity=sparsity)
+
+    agentPositionService = AgentPositionService(ms=ms)
+    agentPositionTimer   = AgentPositionTimer(1, agentPositionService.receive_agent_pose)
+    agentPositionTimer.start()
+
+    pub_inspection_report         = None
+    pub_inspection_report_agent_1 = None
+    sub_inspection_report_agent_1 = None
+    t                             = None
+    if agent_id == '0':
+        sub_inspection_report_agent_1            = rospy.Subscriber('inspection_report_agent_1', String, inspection_report_agent_1_cb)
+        pub_inspection_report                    = rospy.Publisher('inspection_report', String, queue_size=1)
+        minimum_distance_between_spheres_centers = spheres_diameter
+        t                                        = Agent0SpheresTimer(30, detect_spheres, minimum_distance_between_spheres_centers, pub_inspection_report, icmu, agentPositionService, save_number_of_circles_in_map)
+        t.start()
+    else:
+        pub_inspection_report_agent_1 = rospy.Publisher('inspection_report_agent_1', String, queue_size=1)
+        t                             = Agent1SpheresTimer(5, detect_spheres, pub_inspection_report_agent_1, icmu, agentPositionService)
+        t.start()
 
     def take_path_step(map_service, agent_id, path):
         try:
@@ -1916,34 +2091,18 @@ def move_robot_on_path_inspection(map_service, agent_id, path, robot_width, erro
         except rospy.ROSInterruptException:
             rospy.loginfo("Navigation Exception.")
 
-    agentPositionService = AgentPositionService(ms=ms)
-    agentPositionTimer   = AgentPositionTimer(1, agentPositionService.receive_agent_pose)
-    agentPositionTimer.start()
-
-    pub_inspection_report = None
-    t                     = None
-    if agent_id == '0':
-        pub_inspection_report = rospy.Publisher('inspection_report', String, queue_size=1)
-        t = perpetualTimer(30, calculate_number_of_circles_in_map, pub_inspection_report, icmu, agentPositionService, save_number_of_circles_in_map)
-        t.start()
-
     i = 1
     while i < len(path):
         icmu.update_index_in_path(index=i)
         while ((icmu.updated_index_in_path < i) or ((agentPositionService.agent_0_position is None) or (agentPositionService.agent_1_position is None))):
             time.sleep(0.01)
 
-        # print("agentPositionService.agent_0_position")
-        # print(agentPositionService.agent_0_position)
-        # print("agentPositionService.agent_1_position")
-        # print(agentPositionService.agent_1_position)
-        # Gets a list of suspicious sphere points
         if agent_id == '0':
             other_agent_position = agentPositionService.agent_1_position
         else:
             other_agent_position = agentPositionService.agent_0_position
-        current_suspicious_points = icmu.get_suspicious_points(other_agent_position=other_agent_position, robot_width=robot_width, error_gap=error_gap, plot=False, save_plot_to_file=True)
-        # current_suspicious_points = icmu.get_suspicious_points(other_agent_position=other_agent_position, robot_width=robot_width, error_gap=error_gap, plot=False, save_plot_to_file=False)
+        # current_suspicious_points = icmu.get_suspicious_points(other_agent_position=other_agent_position, robot_width=robot_width, error_gap=error_gap, plot=False, save_plot_to_file=True)
+        current_suspicious_points = icmu.get_suspicious_points(other_agent_position=other_agent_position, robot_width=robot_width, error_gap=error_gap, plot=False, save_plot_to_file=False)
 
         # Removes suspicious points that have been checked previously
         indices_to_remove = set()
@@ -2090,29 +2249,40 @@ def move_robot_on_path_inspection(map_service, agent_id, path, robot_width, erro
     #
     #     i += 1
 
+    # Unregisters publishers
     agentPositionTimer.cancel()
-
-    # Cancels the number of circles calculation thread
     if agent_id == '0':
         rate = rospy.Rate(1)
         while not agent_1_finished:
             rate.sleep()
         # noinspection PyUnresolvedReferences
-        sub_agent_1_finished.unregister()
-        sub_agent_1_finished = None
+        # sub_agent_1_finished.unregister()
+        # sub_agent_1_finished = None
         t.cancel()
-        calculate_number_of_circles_in_map(pub=pub_inspection_report, icmu=icmu, save_number_of_circles_in_map=save_number_of_circles_in_map, start_time=t.start_time)
+        t.run_and_publish(icmu=icmu, agentPositionService=agentPositionService, save_number_of_spheres_in_map=save_number_of_circles_in_map)
+        # pub_inspection_report.unregister()
+        # pub_inspection_report = None
+        # sub_inspection_report_agent_1.unregister()
+        # sub_inspection_report_agent_1 = None
+    else:
+        t.cancel()
+        t.run_and_publish(icmu=icmu, agentPositionService=agentPositionService)
+        # pub_inspection_report_agent_1.unregister()
+        # pub_inspection_report_agent_1 = None
 
 def create_folder(folder_name):
-    try:
-        os.makedirs(folder_name)
-    except OSError:
-        if not os.path.isdir(folder_name):
-            raise
-    # Deletes all files in folder
-    files = glob.glob(folder_name + '/*')
-    for f in files:
-        os.remove(f)
+    if os.path.isdir(folder_name):
+        shutil.rmtree(folder_name)
+    os.mkdir(folder_name)
+    # try:
+    #     os.makedirs(folder_name)
+    # except OSError:
+    #     if not os.path.isdir(folder_name):
+    #         raise
+    # # Deletes all files in folder
+    # files = glob.glob(folder_name + '/*')
+    # for f in files:
+    #     os.remove(f)
 
 def create_paths_images_folder():
     global path_folder_name
@@ -2208,7 +2378,7 @@ def receive_triangle_list():
         i += 1
         time.sleep(0.1)
 
-def inspection(ms, agent_id, agent_max_vel, robot_width, error_gap):
+def inspection(ms, agent_id, agent_max_vel, robot_width, error_gap, spheres_diameter):
     global triangle_list_agent_1
     global sub_agent_1_finished
     print('start inspection')
@@ -2241,12 +2411,12 @@ def inspection(ms, agent_id, agent_max_vel, robot_width, error_gap):
     print("Done creating the path. Length:", len(path))
 
     # Plots / Saves the path map
-    # plot_path(borders=borders, path=path, plot=False, save_to_file=False)
-    plot_path(borders=borders, path=path, plot=False, save_to_file=True)
+    plot_path(borders=borders, path=path, plot=False, save_to_file=False)
+    # plot_path(borders=borders, path=path, plot=False, save_to_file=True)
 
     # Moves the robot according to the path
-    # move_robot_on_path_inspection(map_service=ms, agent_id=agent_id, path=path, robot_width=robot_width, error_gap=error_gap, save_map_with_path_image=True, save_number_of_circles_in_map=True)
-    move_robot_on_path_inspection(map_service=ms, agent_id=agent_id, path=path, robot_width=robot_width, error_gap=error_gap, save_map_with_path_image=False, save_number_of_circles_in_map=False)
+    move_robot_on_path_inspection(map_service=ms, agent_id=agent_id, path=path, robot_width=robot_width, error_gap=error_gap, spheres_diameter=spheres_diameter, save_map_with_path_image=True, save_number_of_circles_in_map=True)
+    # move_robot_on_path_inspection(map_service=ms, agent_id=agent_id, path=path, robot_width=robot_width, error_gap=error_gap, spheres_diameter=spheres_diameter, save_map_with_path_image=False, save_number_of_circles_in_map=False)
 
     if agent_id == '0':
         timer.cancel()
@@ -2260,8 +2430,10 @@ def inspection(ms, agent_id, agent_max_vel, robot_width, error_gap):
 
 
 if __name__ == '__main__':
-    robot_width = 5.0
-    error_gap   = 0.15
+    robot_width      = 5.0
+    error_gap        = 0.15
+    spheres_diameter = 20.0
+    # spheres_diameter = 5.0
 
     # Initializes a rospy node to let the SimpleActionClient publish and subscribe
     # rospy.init_node('assignment3') # rospy.init_node('get_map_example')
@@ -2294,13 +2466,19 @@ if __name__ == '__main__':
     Triangle = namedtuple('Triangle', ['coordinates', 'center', 'area', 'edges'])
 
     if exec_mode == 'cleaning':
-        vacuum_cleaning(ms=ms, agent_id=agent_id, robot_width=robot_width, error_gap=error_gap)
+        # TODO: to be deleted
+        if agent_id == '1':
+            dc = DummyCleaner(ms=ms, id=agent_id)
+            dc.run()
+        else:
+            vacuum_cleaning(ms=ms, agent_id=agent_id, robot_width=robot_width, error_gap=error_gap)
+        # vacuum_cleaning(ms=ms, agent_id=agent_id, robot_width=robot_width, error_gap=error_gap)
     elif exec_mode == 'inspection':
         agent_max_vel = sys.argv[3]
         # agent_max_vel = str(configurations["max_vel_x"])
         # agent_max_vel = str(configurations["max_vel_trans"])
         print('agent max vel:' + agent_max_vel)
-        inspection(ms=ms, agent_id=agent_id, agent_max_vel=agent_max_vel, robot_width=robot_width, error_gap=error_gap)
+        inspection(ms=ms, agent_id=agent_id, agent_max_vel=agent_max_vel, robot_width=robot_width, error_gap=error_gap, spheres_diameter=spheres_diameter)
     else:
         print("ERROR: exec_mode not found")
         raise NotImplementedError
