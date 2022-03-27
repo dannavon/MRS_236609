@@ -111,9 +111,10 @@ class DecisionMaking():
         self.results_file_name                                                               = "Results.png"
         self.dirt_pieces_heat_map_file_name                                                  = "1-Dirt_pieces_heat_map.png"
         self.dirt_pieces_heat_and_advisory_to_goal_map_file_name                             = "2-Dirt_pieces_heat_and_advisory_to_goal_map.png"
-        self.agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_name           = "3-Agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map.png"
-        self.occupancy_agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_name = "5-Occupancy_agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map.png"
-        self.agent_result_decision_advisory_advisorys_goal_and_dirt_pieces_map_file_name     = "4-Agent_result_decision_advisory_advisorys_goal_and_dirt_pieces_map.png"
+        self.advisory_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_name        = "3-Advisory_distance_to_dirt_pieces_heat_and_advisory_to_goal_map.png"
+        self.agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_name           = "4-Agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map.png"
+        # self.occupancy_agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_name = "6-Occupancy_agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map.png"
+        self.agent_result_decision_advisory_advisorys_goal_and_dirt_pieces_map_file_name     = "5-Agent_result_decision_advisory_advisorys_goal_and_dirt_pieces_map.png"
         self.binary_occupancy_map                                                            = self.occupancy_map_to_binary_map(occupancy_map)
         self.binary_walls_only_occupancy_map                                                 = self.occupancy_map_to_binary_walls_only_map(occupancy_map)
         self.map_top_left                                                                    = map_top_left
@@ -134,7 +135,8 @@ class DecisionMaking():
         self.dirt_pieces_heat_map_file_path                                                  = None
         self.dirt_pieces_heat_and_advisory_to_goal_map_file_path                             = None
         self.agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_path           = None
-        self.occupancy_agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_path = None
+        self.advisory_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_path        = None
+        # self.occupancy_agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_path = None
         self.agent_result_decision_advisory_advisorys_goal_and_dirt_pieces_map_file_path     = None
         self.results_file_path                                                               = None
         if self.save_to_file:
@@ -211,16 +213,16 @@ class DecisionMaking():
         plt.close()
 
     def save_grid_images_to_file(self):
-        dirt_pieces_heat_map                                                  = Image.fromarray(np.asarray(Image.open(self.dirt_pieces_heat_map_file_path)))
-        dirt_pieces_heat_and_advisory_to_goal_map                             = Image.fromarray(np.asarray(Image.open(self.dirt_pieces_heat_and_advisory_to_goal_map_file_path)))
-        agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map           = Image.fromarray(np.asarray(Image.open(self.agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_path)))
-        # occupancy_agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map = Image.fromarray(np.asarray(Image.open(self.occupancy_agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_path)))
-        agent_result_decision_advisory_advisorys_goal_and_dirt_pieces_map     = Image.fromarray(np.asarray(Image.open(self.agent_result_decision_advisory_advisorys_goal_and_dirt_pieces_map_file_path)))
+        dirt_pieces_heat_map                                              = Image.fromarray(np.asarray(Image.open(self.dirt_pieces_heat_map_file_path)))
+        dirt_pieces_heat_and_advisory_to_goal_map                         = Image.fromarray(np.asarray(Image.open(self.dirt_pieces_heat_and_advisory_to_goal_map_file_path)))
+        agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map       = Image.fromarray(np.asarray(Image.open(self.agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_path)))
+        advisory_distance_to_dirt_pieces_heat_and_advisory_to_goal_map    = Image.fromarray(np.asarray(Image.open(self.advisory_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_path)))
+        agent_result_decision_advisory_advisorys_goal_and_dirt_pieces_map = Image.fromarray(np.asarray(Image.open(self.agent_result_decision_advisory_advisorys_goal_and_dirt_pieces_map_file_path)))
 
         dpi      = mpl.rcParams['figure.dpi']
-        fig, axs = plt.subplots(nrows=2, ncols=2, figsize=(20,20), dpi=dpi)
+        fig, axs = plt.subplots(nrows=3, ncols=2, figsize=(20,20), dpi=dpi)
         plt.subplots_adjust(left=0.0, bottom=0.0, right=1.0, top=1.0, wspace=0.0, hspace=0.0)
-        images = [dirt_pieces_heat_map, dirt_pieces_heat_and_advisory_to_goal_map, agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map, agent_result_decision_advisory_advisorys_goal_and_dirt_pieces_map]
+        images = [dirt_pieces_heat_map, dirt_pieces_heat_and_advisory_to_goal_map, advisory_distance_to_dirt_pieces_heat_and_advisory_to_goal_map, agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map, agent_result_decision_advisory_advisorys_goal_and_dirt_pieces_map]
         for i, ax in enumerate(axs.flatten()):
             if i < len(images):
                 ax.axis('off')
@@ -319,6 +321,37 @@ class DecisionMaking():
 
         return x, y, z
 
+    def update_advisory_distance_to_heat(self, x, y, z, advisory_agent_location):
+        if advisory_agent_location is not None:
+            advisory_agent_location = np.array(advisory_agent_location)
+            z_max                   = np.amax(z)
+            max_distance            = self.find_max_distance_to_accessable_area(location=advisory_agent_location)
+
+            for i in range(x.shape[0]):
+                for j in range(x.shape[1]):
+                    distance = np.linalg.norm(np.array(((float(j) / self.resolution[1]), (float(i) / self.resolution[0]))) - advisory_agent_location)
+                    # if distance < self.dirt_piece_diameter:
+                    # # if distance < self.dirt_piece_radius:
+                    #     z[i][j] = 0.0
+                    # else:
+                    # z[i][j] += (z_max * (1.0 - (distance / max_distance)))
+                    z[i][j] += (z_max * (distance / max_distance))
+
+        if self.plot or self.save_to_file:
+            z_ = copy.deepcopy(z) * self.binary_occupancy_map
+            plt.contourf(x, y, z_, cmap='Blues')
+            self.plot_walls_in_map()
+            # plt.colorbar()
+            plt.title("3-Advisory distance to dirt pieces heat and advisory to goal map")
+            plt.axis('scaled')
+            if self.save_to_file:
+                plt.savefig(self.advisory_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_path)
+            if self.plot:
+                plt.show()
+            plt.clf()
+
+        return x, y, z
+
     def update_agent_distance_to_heat(self, x, y, z, our_agent_location):
         our_agent_location = np.array(our_agent_location)
         z_max              = np.amax(z)
@@ -338,7 +371,7 @@ class DecisionMaking():
             plt.contourf(x, y, z_, cmap='Blues')
             self.plot_walls_in_map()
             # plt.colorbar()
-            plt.title("3-Agent distance to dirt pieces heat and advisory to goal map")
+            plt.title("4-Agent distance to dirt pieces heat and advisory to goal map")
             plt.axis('scaled')
             if self.save_to_file:
                 plt.savefig(self.agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_path)
@@ -348,21 +381,21 @@ class DecisionMaking():
 
         return x, y, z
 
-    def update_occupancy_map(self, x, y, z):
-        z *= self.binary_occupancy_map
-
-        if self.plot or self.save_to_file:
-            plt.contourf(x, y, z, cmap='Blues')
-            # plt.colorbar()
-            plt.title("3-Occupancy/Agent distance to dirt pieces heat and advisory to goal map")
-            plt.axis('scaled')
-            if self.save_to_file:
-                plt.savefig(self.occupancy_agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_path)
-            if self.plot:
-                plt.show()
-            plt.clf()
-
-        return x, y, z
+    # def update_occupancy_map(self, x, y, z):
+    #     z *= self.binary_occupancy_map
+    #
+    #     if self.plot or self.save_to_file:
+    #         plt.contourf(x, y, z, cmap='Blues')
+    #         # plt.colorbar()
+    #         plt.title("5-Occupancy/Agent distance to dirt pieces heat and advisory to goal map")
+    #         plt.axis('scaled')
+    #         if self.save_to_file:
+    #             plt.savefig(self.occupancy_agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_path)
+    #         if self.plot:
+    #             plt.show()
+    #         plt.clf()
+    #
+    #     return x, y, z
 
     def get_indices_of_max(self, z, dirt_pieces_locations, our_agent_location, advisory_agent_location, advisory_agent_goal):
         indices_of_max    = np.unravel_index(z.argmax(), z.shape)
@@ -379,8 +412,9 @@ class DecisionMaking():
         x, y, z = self.create_map()
         x, y, z = self.update_heat_map(x=x, y=y, z=z, dirt_pieces_locations=dirt_pieces_locations)
         x, y, z = self.update_advisory_to_goal_map(x=x, y=y, z=z, our_agent_location=our_agent_location, advisory_agent_location=advisory_agent_location, advisory_agent_goal=advisory_agent_goal, number_of_points=len(dirt_pieces_locations), aggression=aggression)
+        x, y, z = self.update_advisory_distance_to_heat(x=x, y=y, z=z, advisory_agent_location=advisory_agent_location)
         x, y, z = self.update_agent_distance_to_heat(x=x, y=y, z=z, our_agent_location=our_agent_location)
-        x, y, z = self.update_occupancy_map(x=x, y=y, z=z)
+        # x, y, z = self.update_occupancy_map(x=x, y=y, z=z)
         return x, y, z
 
     def calculate_new_goal(self, dirt_pieces_locations, our_agent_location, advisory_agent_location, advisory_agent_goal, aggression):
@@ -390,7 +424,8 @@ class DecisionMaking():
             self.dirt_pieces_heat_map_file_path                                                  = os.path.join(self.current_save_plot_path, self.dirt_pieces_heat_map_file_name)
             self.dirt_pieces_heat_and_advisory_to_goal_map_file_path                             = os.path.join(self.current_save_plot_path, self.dirt_pieces_heat_and_advisory_to_goal_map_file_name)
             self.agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_path           = os.path.join(self.current_save_plot_path, self.agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_name)
-            self.occupancy_agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_path = os.path.join(self.current_save_plot_path, self.occupancy_agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_name)
+            self.advisory_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_path        = os.path.join(self.current_save_plot_path, self.advisory_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_name)
+            # self.occupancy_agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_path = os.path.join(self.current_save_plot_path, self.occupancy_agent_distance_to_dirt_pieces_heat_and_advisory_to_goal_map_file_name)
             self.agent_result_decision_advisory_advisorys_goal_and_dirt_pieces_map_file_path     = os.path.join(self.current_save_plot_path, self.agent_result_decision_advisory_advisorys_goal_and_dirt_pieces_map_file_name)
             self.results_file_path                                                               = os.path.join(self.current_save_plot_path, self.results_file_name)
             os.mkdir(self.current_save_plot_path)
@@ -829,7 +864,7 @@ class CostMapUpdater:
     def __init__(self):
         self.cost_map = None
         self.shape = None
-        rospy.Subscriber('/move_base/global_costmap/costmap', OccupancyGrid, self.init_costmap_callback)
+        rospy.Subscriber('/move_base/global_costmap/costmap'        , OccupancyGrid      , self.init_costmap_callback  )
         rospy.Subscriber('/move_base/global_costmap/costmap_updates', OccupancyGridUpdate, self.costmap_callback_update)
 
     def init_costmap_callback(self, msg):
@@ -852,11 +887,11 @@ class CostMapUpdater:
 
 class MapService(object):
 
-    def __init__(self, ag):
+    def __init__(self, our_agent_id):
         self.initial_pose     = None
         self.initial_pose_map = None
         self.advisory_goal    = None
-        ag_str                = str(ag)
+        ag_str                = str(our_agent_id)
         rospy.wait_for_service('tb3_%c/static_map' % ag_str)
         static_map                         = rospy.ServiceProxy('tb3_%c/static_map' % ag_str, GetMap)
         self.sub_PoseWithCovarianceStamped = rospy.Subscriber('tb3_%c/initialpose' % ag_str, PoseWithCovarianceStamped, self.init_pose)
@@ -1395,7 +1430,7 @@ class DummyCleaner:
         pose = ms.map_to_position(first_pose)
         self.pose_x = pose[0]
         self.pose_y = pose[1]
-        self.odomSub = rospy.Subscriber('/tb3_%d/odom' % 1, Odometry, self.update_dirt_status)
+        self.odomSub = rospy.Subscriber('/tb3_%d/odom' % int(id), Odometry, self.update_dirt_status)
         self.dirtPieces = DirtPiecesService(ms=ms)
 
         rc_DWA_client = dynamic_reconfigure.client.Client('tb3_%d/move_base/DWAPlannerROS' % int(id))
@@ -1448,13 +1483,13 @@ def move_robot_on_path_cleaning(map_service, path):
 
 class AdvisoryGoalService(object):
 
-    def __init__(self, ms, ag):
+    def __init__(self, ms, adv_agent_id):
         self.ms            = ms
-        self.ag            = ag
+        self.adv_agent_id  = int(adv_agent_id)
         self.advisory_goal = None
 
         # Advisory's current goal subscriber
-        self.sub_PoseStamped = rospy.Subscriber('tb3_%d/move_base/current_goal' % int(self.ag), PoseStamped, self.advisory_goal_cb)
+        self.sub_PoseStamped = rospy.Subscriber('tb3_%d/move_base/current_goal' % int(self.adv_agent_id), PoseStamped, self.advisory_goal_cb)
 
     def advisory_goal_cb(self, msg):
         self.advisory_goal = self.ms.position_to_map(np.array((msg.pose.position.x, msg.pose.position.y)))
@@ -1495,13 +1530,14 @@ class DirtPiecesService(object):
         self.sub_String.unregister()
 
 class DecisionMakingTimer():
-    def __init__(self, t, decisionMaking, dirtPiecesService, advisoryGoalService, our_agent_location, agentPositionService, aggression):
+    def __init__(self, t, decisionMaking, dirtPiecesService, advisoryGoalService, our_agent_location, advisory_agent_location, agentPositionService, aggression):
         self.finished                         = False
         self.t                                = t
         self.decisionMaking                   = decisionMaking
         self.dirtPiecesService                = dirtPiecesService
         self.advisoryGoalService              = advisoryGoalService
         self.our_agent_location               = our_agent_location
+        self.advisory_agent_location          = advisory_agent_location
         self.agentPositionService             = agentPositionService
         self.aggression                       = aggression
         self.client                           = actionlib.SimpleActionClient('tb3_%d/move_base' % 0, MoveBaseAction)
@@ -1527,19 +1563,21 @@ class DecisionMakingTimer():
             if self.first_iteration:
                 self.prev_dirt_pieces_locations_len   = len(self.dirtPiecesService.coordinates_list)
                 self.prev_our_agent_location          = self.our_agent_location
-                self.prev_advisory_agent_location     = None  # (165.0, 165.0)
+                self.prev_advisory_agent_location     = self.advisory_agent_location  # (165.0, 165.0)
                 self.prev_current_advisory_agent_goal = self.advisoryGoalService.advisory_goal # (200.0, 125.0)
             else:
                 self.agentPositionService.receive_agent_pose()
-                self.our_agent_location = self.agentPositionService.agent_0_position
-            if ((len(self.dirtPiecesService.coordinates_list) != self.prev_dirt_pieces_locations_len) or
-                    (tuple(self.our_agent_location)           != tuple(self.prev_our_agent_location)) or
+                self.our_agent_location      = self.agentPositionService.our_agent_position
+                self.advisory_agent_location = self.agentPositionService.adv_agent_position
+            if ((len(self.dirtPiecesService.coordinates_list) != self.prev_dirt_pieces_locations_len     ) or
+                    (tuple(self.our_agent_location)           != tuple(self.prev_our_agent_location     )) or
+                    (((self.advisory_agent_location is not None) and (self.prev_advisory_agent_location is not None)) and (tuple(self.advisory_agent_location)           != tuple(self.prev_advisory_agent_location))) or
                     (((self.advisoryGoalService.advisory_goal is not None) and (self.prev_current_advisory_agent_goal is not None)) and (tuple(self.advisoryGoalService.advisory_goal) != tuple(self.prev_current_advisory_agent_goal))) or
-                    self.first_iteration                                                              ):
+                    self.first_iteration                                                                   ):
                 self.first_iteration                  = False
                 self.prev_dirt_pieces_locations_len   = len(self.dirtPiecesService.coordinates_list)
                 self.prev_our_agent_location          = self.our_agent_location
-                self.prev_advisory_agent_location     = None  # (165.0, 165.0)
+                self.prev_advisory_agent_location     = self.advisory_agent_location
                 self.prev_current_advisory_agent_goal = self.advisoryGoalService.advisory_goal # (200.0, 125.0)
                 new_goal_map                          = self.decisionMaking.calculate_new_goal(dirt_pieces_locations=self.dirtPiecesService.coordinates_list, our_agent_location=self.prev_our_agent_location, advisory_agent_location=self.prev_advisory_agent_location, advisory_agent_goal=self.prev_current_advisory_agent_goal, aggression=self.aggression)
                 new_goal_position                     = ms.map_to_position(np.array((new_goal_map[0], new_goal_map[1])))
@@ -1591,18 +1629,18 @@ class DecisionMakingTimer():
         # rospy.signal_shutdown("BYE")
 
 # noinspection PyTypeChecker,PyUnresolvedReferences
-def vacuum_cleaning(ms, agent_id, robot_width, error_gap, dirt_piece_radius):
+def vacuum_cleaning(ms, our_agent_id, adv_agent_id, robot_width, error_gap, dirt_piece_radius):
     print('Starting vacuum_cleaning()')
 
-    rc_DWA_client = dynamic_reconfigure.client.Client('tb3_%d/move_base/DWAPlannerROS' % int(agent_id))
+    rc_DWA_client = dynamic_reconfigure.client.Client('tb3_%d/move_base/DWAPlannerROS' % int(our_agent_id))
     rc_DWA_client.update_configuration({"max_vel_x": "0.22"})
     rc_DWA_client.update_configuration({"yaw_goal_tolerance": "inf"})
     rc_DWA_client.update_configuration({"xy_goal_tolerance": "0.25"})
 
     # plot                    = True
     plot                    = False
-    # save_to_file            = True
-    save_to_file            = False
+    save_to_file            = True
+    # save_to_file            = False
     occupancy_map           = ms.map_arr
     map_top_left            = (0, 0)
     map_bottom_right        = (occupancy_map.shape[1], occupancy_map.shape[0])
@@ -1610,17 +1648,19 @@ def vacuum_cleaning(ms, agent_id, robot_width, error_gap, dirt_piece_radius):
     aggression              = 1.0  ### 0.0 = Ignore advisory. 1.0 = Normal aggression. The higher = The more our agent tries to block the advisory.
     decisionMaking          = DecisionMaking(occupancy_map=occupancy_map, map_top_left=map_top_left, map_bottom_right=map_bottom_right, resolution=resolution, dirt_piece_radius=dirt_piece_radius, save_plot_folder="plots", plot=plot, save_to_file=save_to_file)
     dirtPiecesService       = DirtPiecesService(ms=ms)
-    advisoryGoalService     = AdvisoryGoalService(ms=ms, ag=1)
-    agentPositionService    = AgentPositionService(ms=ms)
+    advisoryGoalService     = AdvisoryGoalService(ms=ms, adv_agent_id=adv_agent_id)
+    agentPositionService    = AgentPositionService(ms=ms, our_agent_id=our_agent_id, adv_agent_id=adv_agent_id)
     first_pose, first_angle = ms.get_first_pose()
     our_agent_location      = first_pose # (125.0, 125.0)
+    advisory_agent_location = agentPositionService.adv_agent_position
     r                       = rospy.Rate(10)
 
-    t = DecisionMakingTimer(0.0001, decisionMaking, dirtPiecesService, advisoryGoalService, our_agent_location, agentPositionService, aggression)
+    t = DecisionMakingTimer(0.0001, decisionMaking, dirtPiecesService, advisoryGoalService, our_agent_location, advisory_agent_location, agentPositionService, aggression)
     t.start()
 
     while not t.finished:
         r.sleep()
+
 
 ### INSPECTION ###
 
@@ -1634,22 +1674,24 @@ current_maps_index                   = 0
 differences_map_index                = 0
 
 class AgentPositionService:
-    def __init__(self, ms):
-        self.ms               = ms
-        self.agent_0_position = None
-        self.agent_0_rotation = None
-        self.agent_1_position = None
-        self.agent_1_rotation = None
-        self.listener         = tf.TransformListener()
+    def __init__(self, ms, our_agent_id, adv_agent_id):
+        self.ms                 = ms
+        self.our_agent_id       = int(our_agent_id)
+        self.adv_agent_id       = int(adv_agent_id)
+        self.our_agent_position = None
+        self.our_agent_rotation = None
+        self.adv_agent_position = None
+        self.adv_agent_rotation = None
+        self.listener           = tf.TransformListener()
 
     def receive_agent_pose(self):
         try:
-            (trans_0, rot_0)      = self.listener.lookupTransform('/map', 'tb3_0/base_link', rospy.Time(0))
-            (trans_1, rot_1)      = self.listener.lookupTransform('/map', 'tb3_1/base_link', rospy.Time(0))
-            self.agent_0_position = self.ms.position_to_map(np.array((trans_0[0], trans_0[1])))
-            self.agent_0_rotation = rot_0
-            self.agent_1_position = self.ms.position_to_map(np.array((trans_1[0], trans_1[1])))
-            self.agent_1_rotation = rot_1
+            (trans_our, rot_our)    = self.listener.lookupTransform('/map', 'tb3_%d/base_link' % self.our_agent_id, rospy.Time(0))
+            (trans_adv, rot_adv)    = self.listener.lookupTransform('/map', 'tb3_%d/base_link' % self.adv_agent_id, rospy.Time(0))
+            self.our_agent_position = self.ms.position_to_map(np.array((trans_our[0], trans_our[1])))
+            self.our_agent_rotation = rot_our
+            self.adv_agent_position = self.ms.position_to_map(np.array((trans_adv[0], trans_adv[1])))
+            self.adv_agent_rotation = rot_adv
         except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
             print("EXCEPTION: receive_agent_pose")
 
@@ -1687,7 +1729,7 @@ class InspectionCostmapUpdater:
         self.updated_index_in_path                  = -1
         self.filter_diagonal                        = (2.0 * (self.spheres_filter_size ** 2.0)) ** 0.5
         self.agent_id_int                           = int(agent_id)
-        rospy.Subscriber('tb3_%d/move_base/global_costmap/costmap'%self.agent_id_int        , OccupancyGrid      , self.init_costmap_callback  )
+        rospy.Subscriber('tb3_%d/move_base/global_costmap/costmap'        %self.agent_id_int, OccupancyGrid      , self.init_costmap_callback  )
         rospy.Subscriber('tb3_%d/move_base/global_costmap/costmap_updates'%self.agent_id_int, OccupancyGridUpdate, self.costmap_callback_update)
 
     def init_costmap_callback(self, msg):
@@ -2519,15 +2561,13 @@ if __name__ == '__main__':
     # configurations = rc_DWA_client.get_configuration()
 
     exec_mode = sys.argv[1]
-    # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
-    # exec_mode = 'cleaning'
-    # exec_mode = 'inspection'
-    # RRRRRRRRRRRRRREMOVEEEEEEEEEEEEEEEEEE
     print('exec_mode:' + exec_mode)
 
     agent_id = sys.argv[2]
-    # agent_id = 0
-    print('agent id:' + str(agent_id))
+    print('agent id:' + agent_id)
+
+    our_agent_id = agent_id
+    adv_agent_id = str(1 - int(agent_id))
 
     if agent_id == '0':
         rospy.init_node('assignment3_agent_0')
@@ -2537,22 +2577,20 @@ if __name__ == '__main__':
         print("ERROR: Bad agent's ID.")
         exit(-1)
 
-    ms = MapService(agent_id)
-
     Triangle = namedtuple('Triangle', ['coordinates', 'center', 'area', 'edges'])
+
+    ms = MapService(our_agent_id=our_agent_id)
 
     if exec_mode == 'cleaning':
         # TODO: to be deleted
         if agent_id == '1':
-            dc = DummyCleaner(ms=ms, id=agent_id)
+            dc = DummyCleaner(ms=ms, id=adv_agent_id)
             dc.run()
         else:
-            vacuum_cleaning(ms=ms, agent_id=agent_id, robot_width=robot_width, error_gap=error_gap, dirt_piece_radius=dirt_piece_radius)
-        # vacuum_cleaning(ms=ms, agent_id=agent_id, robot_width=robot_width, error_gap=error_gap, dirt_piece_radius=dirt_piece_radius)
+            vacuum_cleaning(ms=ms, our_agent_id=our_agent_id, adv_agent_id=adv_agent_id, robot_width=robot_width, error_gap=error_gap, dirt_piece_radius=dirt_piece_radius)
+        # vacuum_cleaning(ms=ms, our_agent_id=our_agent_id, adv_agent_id=adv_agent_id, robot_width=robot_width, error_gap=error_gap, dirt_piece_radius=dirt_piece_radius)
     elif exec_mode == 'inspection':
         agent_max_vel = sys.argv[3]
-        # agent_max_vel = str(configurations["max_vel_x"])
-        # agent_max_vel = str(configurations["max_vel_trans"])
         print('agent max vel:' + agent_max_vel)
         inspection(ms=ms, agent_id=agent_id, agent_max_vel=agent_max_vel, robot_width=robot_width, error_gap=error_gap, spheres_diameter=spheres_diameter)
     else:
